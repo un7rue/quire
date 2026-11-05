@@ -1,0 +1,74 @@
+[package]
+name = "quire"
+version = "0.1.0"
+edition = "2021"
+description = "Professional report designer and generator"
+license = "AGPL-3.0-only"
+default-run = "quire"
+
+# The desktop app (Tauri) is the default. The web server builds without it:
+#   cargo build --release --no-default-features --bin quire-server
+[features]
+default = ["desktop"]
+desktop = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-build", "dep:objc2", "dep:objc2-app-kit", "dep:block2"]
+
+[lib]
+name = "quire"
+path = "src/lib.rs"
+
+[[bin]]
+name = "quire"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "quire-server"
+path = "src/bin/quire-server.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [], optional = true }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"], optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+calamine = "0.26"
+csv = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+postgres = { version = "0.19", features = ["with-chrono-0_4"] }
+svg2pdf = "0.13"
+resvg = "0.45"
+pdf-writer = "0.12"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+base64 = "0.22"
+ttf-parser = "0.25"
+duckdb = { version = "1", features = ["bundled"] }
+sha2 = "0.10"
+# the web server's secrets file (AI keys, database passwords), sealed with a master key
+chacha20poly1305 = "0.10"
+getrandom = "0.2"
+# reference pictures for the design assistant: GIF frames, PNG and JPEG, scaled and re-encoded
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png"] }
+
+# the system eyedropper (NSColorSampler) for picking a colour anywhere on screen
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+objc2-app-kit = { version = "0.3", optional = true, default-features = false, features = ["std", "NSColor", "NSColorSpace", "NSColorSampler", "block2", "objc2-core-foundation"] }
+block2 = { version = "0.6", optional = true }
+
+[profile.dev]
+opt-level = 1
+# line numbers for backtraces, without full debug info: much smaller builds on disk
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+# libraries (DuckDB above all) without debug info
+debug = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

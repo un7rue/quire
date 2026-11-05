@@ -1,0 +1,12 @@
+target
+.git
+.tmp-pages
+.tmp-pages2
+deck
+dev
+backlog
+icons
+capabilities
+Modern UHNWI Report Design
+*.png
+*.pptx

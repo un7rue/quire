@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Quire",
+  "identifier": "app.quire.reports",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Quire",
+        "width": 1480,
+        "height": 940,
+        "minWidth": 1100,
+        "minHeight": 680,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 18, "y": 22 },
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png", "icons/icon.icns"],
+    "category": "Productivity",
+    "fileAssociations": [
+      { "ext": ["rtpl"], "name": "Quire Template", "role": "Editor" },
+      { "ext": ["rpt"], "name": "Quire Report", "role": "Editor" }
+    ]
+  }
+}

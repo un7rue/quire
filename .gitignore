@@ -1,0 +1,16 @@
+# build output
+/target/
+
+# typefaces supplied by clients: not ours to publish (build.rs embeds ui/fonts/private/ when present)
+/ui/fonts/private/
+/resources/fonts/
+
+# material that belongs to others or isn't source
+/resources/examples/
+/Modern UHNWI Report Design/
+/deck/
+
+# scratch
+/.tmp-pages*/
+.DS_Store
+*.swp

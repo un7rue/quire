@@ -1,0 +1,23 @@
+// Admin's parts: Users & roles, Access, AI and Activity (with an AI request open). node dev/shots/admin.mjs <out> [en|ru]
+import { send, ev, shot, sleep, chrome } from './cdp.mjs';
+const lang = process.argv[3] || 'en';
+await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 940, deviceScaleFactor: 1, mobile: false });
+await send('Page.navigate', { url: 'http://localhost:8767/dev/shots/live.html' }); await sleep(3000);
+await ev(`(async () => { const m = await import('/ui/state.js'); try { await m.call('auth', { cmd: 'logout' }, { quiet: true }); } catch {} })()`);
+await send('Page.reload', {}); await sleep(3000);
+await ev(`document.querySelector('.lg-demo button[data-l=admin]')?.click()`); await sleep(3000);
+await ev(`(async () => { const i = await import('/ui/i18n.js'); const m = await import('/ui/state.js'); i.setAppLanguage('${lang}', m.render); })()`); await sleep(800);
+const part = async (k) => { await ev(`document.querySelector('.adm-item[data-part="${k}"]')?.click()`); await sleep(2500); };
+console.log(await ev(`document.querySelector('.adm') ? 'admin ok' : document.body.innerText.slice(0, 300)`));
+await part('users'); await shot(`admin-users-${lang}`);
+await part('access'); await shot(`admin-access-${lang}`);
+await part('ai'); await shot(`admin-ai-${lang}`);
+await part('activity');
+await ev(`document.querySelector('.lg-t tr[data-k]')?.click()`); await sleep(1200);
+await shot(`admin-activity-${lang}`);
+await ev(`document.querySelector('.lg-view button[data-v="events"]')?.click()`); await sleep(1500);
+await ev(`document.querySelector('.lg-areas button[data-area="ai"]')?.click()`); await sleep(1500);
+await ev(`document.querySelector('.lg-t tr[data-k]')?.click()`); await sleep(1500);
+await shot(`admin-activity-ai-${lang}`);
+console.log(await ev(`[...document.querySelectorAll('.lg-t tr[data-k]')].slice(0,3).map(t => t.innerText.replace(/\\s+/g,' ')).join(' | ')`));
+chrome.kill(); process.exit(0);

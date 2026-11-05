@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quire</title>
+  <!-- the interface's appearance (Settings → Appearance), before the first paint -->
+  <script>try { const v = localStorage.getItem('quire.appearance'); if (v === 'light' || v === 'dark') document.documentElement.dataset.theme = v; } catch {}</script>
+  <link rel="stylesheet" href="styles.css">
+  <!-- a client's own typeface, when it's in ui/fonts/private/ (kept out of git) -->
+  <link rel="stylesheet" href="fonts/private/fonts.css">
+  <script>
+    // surface startup errors instead of failing silently
+    window.addEventListener('error', (e) => {
+      if (/ResizeObserver loop/.test(e.message)) return;
+      const d = document.createElement('div');
+      d.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;padding:10px 14px;border-radius:8px;background:#c42b1c;color:#fff;font:12px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap';
+      d.textContent = 'Quire UI error: ' + e.message + (e.filename ? '\n' + e.filename.split('/').pop() + ':' + e.lineno : '');
+      d.onclick = () => d.remove();
+      document.body ? document.body.append(d) : addEventListener('DOMContentLoaded', () => document.body.append(d));
+    });
+    // mirror UI errors to the terminal running `cargo run`
+    (() => {
+      const send = (level, args) => {
+        try {
+          const msg = args.map((a) => (a instanceof Error ? a.stack || a.message : typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+          window.__QUIRE__?.invoke('js_log', { level, msg });
+        } catch { /* logging must never throw */ }
+      };
+      for (const level of ['error', 'warn']) {
+        const orig = console[level].bind(console);
+        console[level] = (...a) => { orig(...a); send(level, a); };
+      }
+      window.addEventListener('unhandledrejection', (e) => send('error', ['unhandled rejection: ' + (e.reason?.stack || e.reason)]));
+    })();
+  </script>
+</head>
+<body>
+  <div id="app">
+    <header id="titlebar" data-tauri-drag-region></header>
+    <div id="shell">
+      <nav id="rail"></nav>
+      <div id="stage">
+        <div id="toolbar"></div>
+        <main id="main">
+          <aside id="left"></aside>
+          <div class="splitter l" title="Drag to resize · double-click to reset"></div>
+          <div id="canvas"></div>
+          <div class="splitter r" title="Drag to resize · double-click to reset"></div>
+          <aside id="right"></aside>
+          <div class="splitter a" title="Drag to resize · double-click to reset"></div>
+          <aside id="aipane" hidden></aside>
+          <aside id="aipane-r" hidden></aside>
+        </main>
+        <div id="home" hidden></div>
+      </div>
+    </div>
+  </div>
+  <div id="overlay-root"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
