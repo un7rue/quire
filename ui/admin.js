@@ -8,6 +8,7 @@ import { S, call, render, setState } from './state.js';
 import { icon } from './icons.js';
 import { esc, h } from './util.js';
 import { toast, modal } from './ui.js';
+import { KEYS_AT } from './platform.js';
 import { initials } from './auth.js';
 import { appLanguage } from './i18n.js';
 import { toggleAdminAI, linksHtml, bindLinks, openLink } from './aiadmin.js';
@@ -225,7 +226,7 @@ export async function aiAdminPage(el) {
 
   // bank-wide keys: used by anyone without a key of their own
   const keyCard = h(`<section class="ar-card"><div class="ar-card-t">${icon('key', 15)} Bank-wide keys <span class="muted">— for anyone without a key of their own</span></div><div class="aa-keys"></div>
-    <div class="hint">Saved to this computer’s Keychain and never shown again. A person’s own keys are in their account (Users & roles).</div></section>`);
+    <div class="hint">Saved ${KEYS_AT} and never shown again. A person’s own keys are in their account (Users & roles).</div></section>`);
   const drawKeys = async () => {
     let s2 = st;
     try { s2 = await call('ai_status', {}, { quiet: true }); } catch {}

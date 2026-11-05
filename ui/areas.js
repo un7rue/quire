@@ -7,6 +7,7 @@
 // - Admin: accounts, passwords, roles and client access.
 
 import { setAreaAI } from './ai.js';
+import { KEYS_AT } from './platform.js';
 import { appLanguage } from './i18n.js';
 import { accessPage, aiAdminPage, activityPage, proposalsAdminPage } from './admin.js';
 import { toggleAreaFold } from './rail.js';
@@ -1048,7 +1049,7 @@ async function usersPage(el) {
       <div class="ad-reps"></div>
       <div class="ad-sec">AI <span class="muted">— what AI assistants may send for this person</span></div>
       <div class="ad-ai"><select name="ai"><option value="">Not set — from their groups, else the bank</option>${AI_LEVELS.map(([v, l]) => `<option value="${v}"${(u.ai_level === 'full' ? 'aggregates' : u.ai_level) === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select><div class="hint ad-ai-now"></div></div>
-      ${isNew ? '' : `<div class="ad-sec">AI keys <span class="muted">— their own keys; saved at once to this computer’s Keychain and never shown again</span></div>
+      ${isNew ? '' : `<div class="ad-sec">AI keys <span class="muted">— their own keys; saved at once ${KEYS_AT} and never shown again</span></div>
       <div class="ad-keys"></div>`}
       <div class="ad-err" hidden></div>
       <div class="ad-acts">

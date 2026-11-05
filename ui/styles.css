@@ -178,7 +178,7 @@ code { font-family: var(--font-mono); font-size: 11px; background: var(--surface
   padding: 0 12px 0 84px; background: var(--chrome); border-bottom: 1px solid var(--border);
 }
 /* in a browser there are no window buttons to leave room for */
-html[data-platform="web"] #titlebar { padding-left: 14px; }
+html[data-platform="web"] #titlebar, html[data-os="other"] #titlebar { padding-left: 14px; }
 .tb-left, .tb-right { display: flex; align-items: center; gap: 6px; }
 .tb-center { flex: 1; height: 100%; }
 .app-mark { display: flex; cursor: pointer; }

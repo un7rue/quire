@@ -1,5 +1,5 @@
 //! The desktop app: Quire's core in a Tauri window, with the computer's own file dialogs,
-//! eyedropper and Finder. Every command goes through `quire::dispatch`, as on the web server.
+//! eyedropper and Finder (on macOS; elsewhere a sealed secrets file and the file manager). Every command goes through `quire::dispatch`, as on the web server.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use quire::{AppState, FileSpec, Host};
@@ -78,12 +78,31 @@ impl Host for Desktop {
         }
     }
 
+    /// Shows the file in Finder (or the file manager), or opens it with its app (`open`).
     fn reveal(&self, path: &Path, open: bool) -> Result<(), String> {
-        let mut cmd = std::process::Command::new("open");
-        if !open {
-            cmd.arg("-R");
-        }
-        cmd.arg(path).spawn().map_err(|e| e.to_string())?;
+        #[cfg(target_os = "macos")]
+        let mut cmd = {
+            let mut c = std::process::Command::new("open");
+            if !open {
+                c.arg("-R");
+            }
+            c.arg(path);
+            c
+        };
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = std::process::Command::new("explorer");
+            c.arg(if open { path.as_os_str().to_owned() } else { format!("/select,{}", path.display()).into() });
+            c
+        };
+        // Linux and the like: the desktop's opener, on the file's folder to show it
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let mut cmd = {
+            let mut c = std::process::Command::new("xdg-open");
+            c.arg(if open || path.is_dir() { path } else { path.parent().unwrap_or(path) });
+            c
+        };
+        cmd.spawn().map_err(|e| format!("Couldn't open the file manager: {e}"))?;
         Ok(())
     }
 
@@ -120,7 +139,13 @@ fn main() {
         .setup(|app| {
             let host = Desktop(app.handle().clone());
             if let Some(d) = host.data_dir() {
-                let _ = std::fs::create_dir_all(d);
+                let _ = std::fs::create_dir_all(&d);
+                // no Keychain outside macOS: AI keys and database passwords go to a sealed file, as on the server
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let master = quire::secrets::master_key(&d)?.0;
+                    quire::secrets::use_file(&d.join("secrets.json"), &master)?;
+                }
             }
             app.manage::<Core>(Arc::new(AppState::new(Box::new(host), None)));
             Ok(())

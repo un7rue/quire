@@ -6,7 +6,7 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = process.argv[2] || '.';
 const port = 9300 + Math.floor(Math.random() * 500);
 const prof = mkdtempSync(join(tmpdir(), 'cdp-'));
-export const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+export const chrome = spawn(process.env.CHROME || (process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : 'google-chrome'),
   ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, '--window-size=1600,1000', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
 let tabs;
 for (let i = 0; i < 50; i++) { try { tabs = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); if (tabs.find((t) => t.type === 'page')) break; } catch {} await sleep(200); }

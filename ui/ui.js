@@ -2,6 +2,7 @@
 import { icon } from './icons.js';
 import { esc, h } from './util.js';
 import { colorPicker, normHex, pickFromScreen } from './colorpick.js';
+import { CAN_PICK_SCREEN } from './platform.js';
 
 const root = () => document.getElementById('overlay-root');
 let openLayer = null;
@@ -214,6 +215,7 @@ export function colorPalette(anchor, { onPick, noneLabel = 'No fill', title = 'T
     if (!custom.childElementCount) custom.append(colorPicker('#2a78d6', (c) => { closeLayer(); onPick(c.toUpperCase()); }));
     custom.hidden = !custom.hidden;
   });
+  el.querySelector('.drop').hidden = !CAN_PICK_SCREEN;
   el.querySelector('.drop').addEventListener('click', async () => {
     const c = normHex(await pickFromScreen());
     if (c) { closeLayer(); onPick(c.toUpperCase()); }

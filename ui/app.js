@@ -1,7 +1,7 @@
 // Quire — app shell: title bar, period & parameter controls, home screen,
 // shortcuts and export.
 
-import { WEB } from './platform.js';
+import { WEB, KEYS_AT, FILES_APP } from './platform.js';
 import { S, api, call, edit, setState, onChange, render, isReport, isTheme, userMode, findWidget, policy, canEdit } from './state.js';
 import { initCanvas, renderCanvas, scrollToPage, fitZoom, startInlineEdit, pageItems, selectNewest, widgetMenu, cellAt } from './canvas.js';
 import { initLeft, renderLeft, initRight, renderRight, saveToGallery, renamePage, KINDS, newWidget, currentPageId, formatRows, formatSample, publishDialog } from './panels.js';
@@ -254,7 +254,7 @@ function aiSettingsPage(s) {
       wrap.append(adm);
       wrap.append(h(`<div class="sec-title">${icon('key', 13)} Your own keys</div>`));
     }
-    if (!usable.length && !pol.off) wrap.append(h(`<div class="hint">Add an API key below to start. Keys are stored in the macOS Keychain and never shown again.</div>`));
+    if (!usable.length && !pol.off) wrap.append(h(`<div class="hint">Add an API key below to start. Keys are stored ${KEYS_AT} and never shown again.</div>`));
     for (const p of st.providers) wrap.append(providerCard(p, st, false));
   };
   const providerCard = (p, st, bank) => {
@@ -273,7 +273,7 @@ function aiSettingsPage(s) {
     inp.addEventListener('keydown', (e) => e.stopPropagation());
     card.querySelector('[data-k="save"]').addEventListener('click', async () => {
       if (!inp.value.trim()) { inp.focus(); return; }
-      try { await call('ai_set_key', { provider: p.id, key: inp.value.trim(), bank }); inp.value = ''; toast(`${p.name} key saved to the Keychain.`); draw(); } catch {}
+      try { await call('ai_set_key', { provider: p.id, key: inp.value.trim(), bank }); inp.value = ''; toast(`${p.name} key saved.`); draw(); } catch {}
     });
     card.querySelector('[data-k="del"]')?.addEventListener('click', async () => {
       try { await call('ai_set_key', { provider: p.id, key: null, bank }); toast(`${p.name} key removed.`); draw(); } catch {}
@@ -457,7 +457,7 @@ export async function manageThemes() {
         const name = await ask('Rename theme', t.name);
         if (name && name !== t.name) { await api.themeOp('rename', t.id, name); toast('Theme renamed'); }
       });
-      if (!WEB) act('folder', 'Show in Finder', () => call('reveal', { path: t.path, open: false }), '', false);
+      if (!WEB) act('folder', `Show in ${FILES_APP}`, () => call('reveal', { path: t.path, open: false }), '', false);
       act('trash', 'Delete', async () => {
         const ok = await modal({ title: 'Delete theme', iconName: 'warn', iconKind: 'warn', body: `<p>Delete “${esc(t.name)}” from your library? Templates that use it keep their copy of the theme.</p>`, buttons: [{ label: 'Cancel', value: false }, { label: 'Delete', kind: 'danger', value: true }] });
         if (ok) { await api.themeOp('delete', t.id); toast('Theme deleted'); }
@@ -1130,7 +1130,7 @@ async function doExport(format) {
     // in the browser the file comes as a download
     if (path) actionToast(`${WEB ? 'Downloaded' : 'Exported'} ${path.split('/').pop()}`, WEB ? [] : [
       ['Open', () => call('reveal', { path, open: true })],
-      ['Show in Finder', () => call('reveal', { path, open: false })],
+      [`Show in ${FILES_APP}`, () => call('reveal', { path, open: false })],
     ]);
   } catch { /* toast shown */ }
 }

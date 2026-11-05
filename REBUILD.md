@@ -694,23 +694,21 @@ Each fixed bug gets a test that fails without the fix. Each new screen gets a `d
 
 ## 8. Linux notes
 
-The original was built on macOS. These parts need a Linux version:
+Quire builds and runs on Linux since 0.2.0; GitHub Actions checks it on Ubuntu 24.04 (`.github/workflows/linux.yml`).
+What differs from macOS:
 
-| macOS piece | Where | Linux replacement |
-|---|---|---|
-| AI keys in the Keychain via `/usr/bin/security` | `src/ai.rs` ~lines 120–170 | Use the sealed `secrets.rs` store the server already has (simplest), or `secret-tool` (libsecret). Keep the same functions: read, has, set. |
-| "Show in Finder" via `open` | `src/main.rs` `reveal` | `xdg-open <folder>` (or `<file>` when `open = true`); label it "Show in folder". |
-| Screen eyedropper (NSColorSampler, `objc2`) | `src/main.rs`, macOS-only deps | Return `Ok(None)` on Linux and hide the button; the browser's own EyeDropper API works in Chromium. |
-| `Command::new("id")` | `src/app.rs:178` | Works on Linux as is. |
-| Title bar overlay and traffic-light position | `tauri.conf.json` | Ignored on Linux. Keep `titleBarStyle` but check the title bar's left padding (CSS `[data-platform]`). |
-| App data folder | Tauri `app_data_dir` | `~/.local/share/app.quire.reports/` automatically. |
-| System fonts | `fonts.rs` (`fontdb::load_system_fonts`) | Works on Linux as is (it reads fontconfig folders). The bundled fonts in `ui/fonts/` matter more: check they load. |
-| Headless Chrome for checks | `dev/shots/cdp.mjs` line 9 (macOS Chrome path) | `chromium` or `google-chrome`; make the path an environment variable. |
-| Keyboard shortcuts shown as ⌘ | UI labels | Show Ctrl on Linux (`navigator.platform`); handle `ctrlKey` as well as `metaKey`. |
+| macOS piece | Linux |
+|---|---|
+| AI keys and connection passwords in the Keychain (`/usr/bin/security`, `src/ai.rs`) | The sealed `secrets.json` the server uses, in the app's data folder (`src/main.rs` setup → `secrets::use_file`). |
+| "Show in Finder" (`open -R`) | `xdg-open` on the file's folder; the UI says "Show in folder" (`FILES_APP` in `ui/platform.js`). |
+| Screen eyedropper (NSColorSampler, `objc2`, macOS-only deps) | Hidden (`CAN_PICK_SCREEN`); WebKitGTK has no EyeDropper. |
+| Title bar overlay with window buttons | Ignored by Tauri; the title bar drops its left gap (`html[data-os="other"]`). |
+| App data folder | `~/.local/share/app.quire.reports/` (Tauri). |
+| Headless Chrome for checks (`dev/shots/cdp.mjs`) | `google-chrome`, or the path in `CHROME`. |
+| Shortcuts shown as ⌘ | Ctrl (`isMac`/`mod` in `ui/util.js`). |
 
-The Tauri prerequisites on Linux are `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `librsvg2-dev`,
-`libayatana-appindicator3-dev` and `libssl-dev`. The web server needs none of them. **Start with the web
-server on Linux:** it was never run on Linux, so that is the first thing to prove.
+Packages: `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev libssl-dev libxdo-dev`
+for the desktop app; the web server needs none of them.
 
 ---
 

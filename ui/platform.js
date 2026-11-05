@@ -9,6 +9,19 @@ export const WEB = window.__QUIRE_AS__ ? window.__QUIRE_AS__ === 'web' : !window
 
 document.documentElement.dataset.platform = WEB ? 'web' : 'desktop';
 
+/** The desktop app on macOS (window buttons in the title bar, Keychain, Finder, the system eyedropper). */
+export const MAC_APP = !WEB && /Mac/.test(navigator.platform || navigator.userAgent);
+document.documentElement.dataset.os = MAC_APP ? 'mac' : 'other';
+
+/** Where saved AI keys are kept, for the hints next to the key fields. */
+export const KEYS_AT = WEB ? 'on the server, sealed' : MAC_APP ? 'in this computer’s Keychain' : 'on this computer, sealed';
+
+/** The file manager's name, for "Show in …". */
+export const FILES_APP = MAC_APP ? 'Finder' : 'folder';
+
+/** Whether a colour can be picked from the screen: the system sampler on macOS, else the browser's own. */
+export const CAN_PICK_SCREEN = MAC_APP || !!window.EyeDropper;
+
 async function overHttp(cmd, args) {
   const r = await fetch(window.__QUIRE_API__ || '/api/call', {
     method: 'POST',

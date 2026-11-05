@@ -18,6 +18,21 @@ cargo run             # the desktop app (dev build)
 cargo test            # engine tests
 ```
 
+**On Linux** (Ubuntu 24.04 or similar) the desktop app needs Tauri's libraries; the web server needs none of them:
+
+```sh
+sudo apt-get install build-essential pkg-config libssl-dev libwebkit2gtk-4.1-dev libgtk-3-dev \
+  librsvg2-dev libayatana-appindicator3-dev libxdo-dev xdg-utils
+cargo run                                   # the desktop app
+npx @tauri-apps/cli@^2 build --bundles deb,appimage   # packages (.deb, AppImage)
+```
+
+On Linux the desktop app keeps AI keys and database passwords in `secrets.json` in its data folder
+(`~/.local/share/app.quire.reports/`), sealed with `master.key` beside it or `QUIRE_SECRET_KEY`, as the server does;
+*Show in folder* opens the file manager (`xdg-open`); the screen eyedropper is macOS-only and hidden. Every push to
+GitHub builds and checks it on Ubuntu (`.github/workflows/linux.yml`: engine tests, the server and its checks, the
+desktop app, `.deb` and AppImage kept with the run).
+
 **In a browser.** The same app runs as a web server: one core, one UI, two ways in. The desktop app is unchanged.
 
 ```sh

@@ -1,5 +1,5 @@
-//! The web server's secrets: AI keys and database passwords, kept in one file sealed with a
-//! master key (ChaCha20-Poly1305), instead of the macOS Keychain the desktop app uses.
+//! Secrets for the web server and the desktop app outside macOS: AI keys and database passwords, kept in one file sealed with a
+//! master key (ChaCha20-Poly1305), instead of the macOS Keychain the Mac app uses.
 //!
 //! The master key comes from `QUIRE_SECRET_KEY` (any passphrase; keep it outside the data
 //! folder: then a copy of the folder alone doesn't give the secrets away). Without it, the server

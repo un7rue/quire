@@ -9,6 +9,24 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
 
 ---
 
+## 0.2.0 — 5 November 2026
+
+### New
+
+- **Quire on Linux.** The desktop app and the web server build and run on Linux (checked on Ubuntu 24.04), and are
+  packaged as `.deb` and AppImage. AI keys and database passwords are kept sealed in the app's data folder, as on the
+  server, since Linux has no Keychain; *Show in folder* opens the file manager; the screen eyedropper, macOS-only, isn't
+  offered there (`src/main.rs`, `ui/platform.js`).
+- **Every push is built and checked on Linux** by GitHub Actions: the engine tests, the web server and its checks, the
+  desktop app and its packages (`.github/workflows/linux.yml`).
+
+### Fixed
+
+- **In a browser, the AI key hints said keys were kept in the Keychain.** They now say where they really are: on the
+  server, sealed (`KEYS_AT` in `ui/platform.js`).
+
+---
+
 ## 0.1.0 — 5 November 2026
 
 The first numbered version, and the first one with its source in a GitHub repository.

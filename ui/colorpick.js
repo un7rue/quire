@@ -4,6 +4,7 @@
 import { esc, h } from './util.js';
 import { icon } from './icons.js';
 import { toast } from './ui.js';
+import { CAN_PICK_SCREEN } from './platform.js';
 
 
 const HEX = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i;
@@ -81,6 +82,7 @@ export function colorPicker(start, onPick) {
   });
   hex.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const c = normHex(hex.value); if (c) onPick(c); } });
   el.querySelector('.cpk-ok').addEventListener('click', () => onPick(normHex(hex.value) || cur()));
+  el.querySelector('.cpk-drop').hidden = !CAN_PICK_SCREEN;
   el.querySelector('.cpk-drop').addEventListener('click', async () => {
     const c = normHex(await pickFromScreen());
     if (c) { [hh, sat, val] = toHsv(c); draw(); onPick(c); }

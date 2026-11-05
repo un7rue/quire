@@ -2219,4 +2219,15 @@ export default {
   "any theme": "любая тема",
   "Sample data: the widget is drawn on example figures. In a template it shows that template's data.": "Пример данных: виджет показан на условных цифрах. В шаблоне он показывает данные этого шаблона.",
   "The widgets library: every widget once, built-in and yours, with the themes that include it and the templates that use it.": "Библиотека виджетов: каждый виджет один раз, встроенные и ваши, с темами, в которые он входит, и шаблонами, где он используется.",
+  // where keys are kept and the file manager, by platform (platform.js)
+  "Add an API key below to start. Keys are stored on the server, sealed and never shown again.": "Чтобы начать, добавьте API-ключ ниже. Ключи хранятся на сервере в зашифрованном виде и больше не показываются.",
+  "— their own keys; saved at once on the server, sealed and never shown again": "— личные ключи пользователя; сразу сохраняются на сервере в зашифрованном виде и больше не показываются",
+  "Saved on the server, sealed and never shown again. A person’s own keys are in their account (Users & roles).": "Сохраняются на сервере в зашифрованном виде и больше не показываются. Личные ключи — в учётной записи человека (Пользователи и роли).",
+  "Add an API key below to start. Keys are stored in this computer’s Keychain and never shown again.": "Чтобы начать, добавьте API-ключ ниже. Ключи хранятся в Связке ключей этого компьютера и больше не показываются.",
+  "— their own keys; saved at once in this computer’s Keychain and never shown again": "— личные ключи пользователя; сразу сохраняются в Связке ключей этого компьютера и больше не показываются",
+  "Saved in this computer’s Keychain and never shown again. A person’s own keys are in their account (Users & roles).": "Сохраняются в Связке ключей этого компьютера и больше не показываются. Личные ключи — в учётной записи человека (Пользователи и роли).",
+  "Add an API key below to start. Keys are stored on this computer, sealed and never shown again.": "Чтобы начать, добавьте API-ключ ниже. Ключи хранятся на этом компьютере в зашифрованном виде и больше не показываются.",
+  "— their own keys; saved at once on this computer, sealed and never shown again": "— личные ключи пользователя; сразу сохраняются на этом компьютере в зашифрованном виде и больше не показываются",
+  "Saved on this computer, sealed and never shown again. A person’s own keys are in their account (Users & roles).": "Сохраняются на этом компьютере в зашифрованном виде и больше не показываются. Личные ключи — в учётной записи человека (Пользователи и роли).",
+  'Show in folder': 'Показать в папке',
 }

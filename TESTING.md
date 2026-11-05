@@ -14,6 +14,7 @@ The checks run before a change is called done, and how to run them yourself. Cha
 | Any change to a chart's series settings | A part per series: layout and each setting drawn | `node dev/shots/series-parts.mjs <out>` (needs the web server) | 30 s |
 | Any change to selection or the inspector's tabs | Several widgets selected: shared settings, changes, moves and deletes reach all | `node dev/shots/multi-select.mjs <out>` (needs the web server) | 30 s |
 | A change to a screen (client list, dialogs, admin, AI panes) | The screen driven in a headless browser and screenshotted | `dev/shots/*.mjs` | 10–60 s |
+| **Every push to GitHub** | On Linux (Ubuntu 24.04): engine tests, the web server and its checks, the desktop app, `.deb` and AppImage | GitHub Actions, `.github/workflows/linux.yml`; `gh run watch` | ~20 min |
 | Before a release that changes what users do | The **Test** steps in the user guide, by a person | [ui/help/guide.md](ui/help/guide.md), each chapter's *Test* list | — |
 
 A change is done when `cargo test` passes in full. Failures are fixed, not skipped. If a check wasn't run, the release
