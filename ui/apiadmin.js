@@ -1,8 +1,9 @@
 /**
  * Admin → API: the systems that ask Quire for reports over its API (a CRM, a client portal, a
  * scheduler), each with its own key, clients and products, and reports; what each published report
- * accepts from them (which parameters a request may set, and their defaults); how long finished
- * files are kept. Keys are shown once, when made (src/api_accounts.rs).
+ * accepts from them (which parameters a request may set, and their defaults); where reports are
+ * copied (a folder or an S3 bucket) and where callbacks may go; how long finished files are kept.
+ * Keys are shown once, when made (src/api_accounts.rs, src/api_delivery.rs).
  */
 import { call } from './state.js';
 import { icon } from './icons.js';
@@ -35,6 +36,7 @@ export async function apiAdminPage(el) {
       <section class="ar-card ad-edit api-edit"><div class="ar-note">Pick an API account to change it, or add one.</div></section>
     </div>
     <section class="ar-card api-reps"></section>
+    <section class="ar-card api-dests"></section>
     <section class="ar-card api-files"></section>`;
   let api, opts;
   try {
@@ -76,6 +78,12 @@ export async function apiAdminPage(el) {
       <div class="ad-access"></div>
       <div class="ad-sec">Reports <span class="muted">— none ticked: every published report</span></div>
       <div class="ad-reps">${api.reports.map((r) => `<label class="ad-rep${c.reports.includes(r.id) ? ' on' : ''}"><input type="checkbox" value="${esc(r.id)}"${c.reports.includes(r.id) ? ' checked' : ''}><span class="ad-rbox">${icon('check', 13, 2.4)}</span><span class="ad-rtx"><b>${esc(r.title)}</b><span>${r.off ? 'kept off the API' : r.published ? 'published' : 'not published'}</span></span></label>`).join('') || '<div class="ar-note">No reports published yet.</div>'}</div>
+      <div class="ad-sec">Delivery <span class="muted">— besides the download</span></div>
+      <div class="ad-grid">
+        <label>Copy its reports to<select name="copy_to"><option value="">Nowhere: download only</option>${(api.targets || []).map((t) => `<option value="${esc(t.id)}"${c.copy_to === t.id ? ' selected' : ''} class="no-i18n">${esc(t.name)}</option>`).join('')}</select></label>
+        <label>Callbacks may go to<input name="hooks" value="${esc((c.callback_hosts || []).join(', '))}" placeholder="none: no callbacks" spellcheck="false" autocapitalize="off"></label>
+      </div>
+      <div class="hint">Hosts by comma, like crm.bank.local or hooks.bank.local:8443. A request's callback_url must be on one of them. Callbacks are signed with a key worked out from the account's API key.${!isNew && c.key && !c.key.signs ? ' <b>This account’s key is older than callbacks: make a new key to sign them.</b>' : ''}</div>
       <div class="ad-err" hidden></div>
       <div class="ad-acts">
         ${isNew ? '' : `<button class="btn danger-ghost" data-a="del">${icon('trash', 14)} Delete</button>`}
@@ -91,7 +99,8 @@ export async function apiAdminPage(el) {
     editEl.querySelector('[data-a="cancel"]').addEventListener('click', () => { if (isNew) sel = null; drawList(); drawEditor(); });
     editEl.querySelector('[data-a="save"]').addEventListener('click', async () => {
       const client = { was: isNew ? '' : c0.id, id: $('id').value.trim(), name: $('name').value.trim(), description: $('description').value.trim(), active: $('active').checked,
-        access: c.access, reports: [...editEl.querySelectorAll('.ad-rep input:checked')].map((x) => x.value) };
+        access: c.access, reports: [...editEl.querySelectorAll('.ad-rep input:checked')].map((x) => x.value),
+        copy_to: $('copy_to').value, callback_hosts: $('hooks').value.split(',').map((x) => x.trim()).filter(Boolean) };
       if (!isNew && client.id !== c0.id && !await modal({ title: 'Change the id?', iconName: 'warn', iconKind: 'warn',
         body: '<p>The key carries the id: the account gets a new key, and the old one stops working.</p>',
         buttons: [{ label: 'Cancel', value: false }, { label: 'Change and make a new key', kind: 'primary', value: true }] })) return;
@@ -99,7 +108,7 @@ export async function apiAdminPage(el) {
         const r = await call('auth', { cmd: 'api_save_client', args: { client } }, { quiet: true });
         api = r.api;
         sel = api.clients.find((x) => x.name === client.name && (!client.id || x.id === client.id))?.id ?? null;
-        drawList(); drawEditor(); drawReports();
+        drawList(); drawEditor(); drawReports(); drawDests();
         if (r.key) await showKey(r.key, client.name); else toast(`Saved “${client.name}”`);
       } catch (e) { err.hidden = false; err.textContent = String(e); }
     });
@@ -158,11 +167,74 @@ export async function apiAdminPage(el) {
     });
   };
 
+  // ---- destinations: folders and S3 buckets reports are copied to
+  const destEl = el.querySelector('.api-dests');
+  const destForm = async (t0) => {
+    const t = t0 || { name: '', kind: 'folder', folder: '', endpoint: '', bucket: '', region: '', prefix: '', access_key: '' };
+    const body = document.createElement('div');
+    body.className = 'modal-body api-dform';
+    body.innerHTML = `<div class="seg"><button data-k="folder" class="${t.kind === 'folder' ? 'on' : ''}">Folder or file share</button><button data-k="s3" class="${t.kind === 's3' ? 'on' : ''}">S3 bucket</button></div>
+      <div class="ad-grid">
+        <label class="api-wide">Name<input name="name" value="${esc(t.name)}" placeholder="e.g. Reports share"></label>
+        <label class="api-wide" data-for="folder">Folder on the server<input name="folder" value="${esc(t.folder)}" placeholder="/mnt/reports" spellcheck="false"></label>
+        <label class="api-wide" data-for="s3">Service address<input name="endpoint" value="${esc(t.endpoint)}" placeholder="https://s3.eu-central-1.amazonaws.com" spellcheck="false"></label>
+        <label data-for="s3">Bucket<input name="bucket" value="${esc(t.bucket)}" spellcheck="false"></label>
+        <label data-for="s3">Region<input name="region" value="${esc(t.region)}" placeholder="us-east-1" spellcheck="false"></label>
+        <label class="api-wide" data-for="s3">Prefix<input name="prefix" value="${esc(t.prefix)}" placeholder="optional, like quire/reports" spellcheck="false"></label>
+        <label data-for="s3">Access key<input name="access_key" value="${esc(t.access_key)}" spellcheck="false" autocomplete="off"></label>
+        <label data-for="s3">Secret key<input name="secret_key" type="password" placeholder="${t0?.has_secret ? '•••••••• saved — type to replace' : ''}" autocomplete="off"></label>
+      </div>
+      <p class="hint">Reports go into folders by account, day and job. Secret keys are sealed on the server and never shown again.</p>
+      <div class="ad-err" hidden></div>`;
+    let kind = t.kind;
+    const show = () => body.querySelectorAll('[data-for]').forEach((l) => { l.hidden = l.dataset.for !== kind; });
+    body.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => { kind = b.dataset.k; body.querySelectorAll('.seg button').forEach((x) => x.classList.toggle('on', x === b)); show(); }));
+    show();
+    const save = async (box) => {
+      const v = (n) => box.querySelector(`[name="${n}"]`).value;
+      const target = { was: t0?.id || '', kind, name: v('name'), folder: v('folder'), endpoint: v('endpoint'), bucket: v('bucket'), region: v('region'), prefix: v('prefix'), access_key: v('access_key'), secret_key: v('secret_key') };
+      try { const r = await call('auth', { cmd: 'api_save_target', args: { target } }, { quiet: true }); api = r.api; return true; } catch (e) { const er = box.querySelector('.ad-err'); er.hidden = false; er.textContent = String(e); return null; }
+    };
+    // the dialog stays open while the destination doesn't save
+    for (;;) {
+      const r = await modal({ title: t0 ? `Change “${t0.name}”` : 'New destination', iconName: 'folder', wide: true, body, buttons: [{ label: 'Cancel', value: false }, { label: 'Save', kind: 'primary', value: (box) => save(box) }] });
+      const ok = await r;
+      if (ok !== null) { if (ok) { drawDests(); drawList(); drawEditor(); toast(`Saved “${body.querySelector('[name="name"]').value}”`); } return; }
+    }
+  };
+  const drawDests = () => {
+    const list = api.targets || [];
+    destEl.innerHTML = `<div class="ar-card-t">${icon('folder', 15)} Destinations <span class="muted">${list.length}</span><span class="grow"></span><button class="btn sm" data-a="dadd">${icon('plus', 13)} Add destination</button></div>
+      <p class="muted api-lead">Where an account's reports are copied, besides the download: a folder on the server (a mounted file share too) or an S3-compatible bucket (AWS, MinIO, Yandex Object Storage…). Pick one for an account above.</p>
+      ${list.length ? `<table class="ac-t"><thead><tr><th>Name</th><th>Where</th><th>Accounts</th><th></th></tr></thead><tbody>${list.map((t) => {
+        const users = api.clients.filter((c) => c.copy_to === t.id).map((c) => c.name);
+        return `<tr data-id="${esc(t.id)}"><td><b class="no-i18n">${esc(t.name)}</b></td>
+          <td><span class="muted">${t.kind === 's3' ? 'S3 bucket' : 'Folder'}</span> <code>${esc(t.kind === 's3' ? `${t.endpoint}/${t.bucket}${t.prefix ? `/${t.prefix}` : ''}` : t.folder)}</code></td>
+          <td class="no-i18n">${users.length ? esc(users.join(', ')) : '—'}</td>
+          <td class="api-dacts"><button class="btn sm" data-a="dtest">${icon('check', 13)} Test</button><button class="btn sm" data-a="dedit">${icon('rename', 13)} Change</button><button class="btn sm" data-a="ddel" title="Delete">${icon('trash', 13)}</button></td></tr>`;
+      }).join('')}</tbody></table>` : '<div class="ar-note">No destinations: reports are only downloaded.</div>'}`;
+    destEl.querySelector('[data-a="dadd"]').addEventListener('click', () => destForm(null));
+    destEl.querySelectorAll('tr[data-id]').forEach((tr) => {
+      const t = list.find((x) => x.id === tr.dataset.id);
+      tr.querySelector('[data-a="dedit"]').addEventListener('click', () => destForm(t));
+      tr.querySelector('[data-a="dtest"]').addEventListener('click', async (e) => {
+        e.target.closest('button').disabled = true;
+        try { const r = await call('auth', { cmd: 'api_test_target', args: { id: t.id } }, { quiet: true }); toast(`Quire can write to “${t.name}”`); console.debug(r.at); } catch (er) { toast(String(er), 'error', 8000); }
+        e.target.closest('button').disabled = false;
+      });
+      tr.querySelector('[data-a="ddel"]').addEventListener('click', async () => {
+        if (!await modal({ title: `Delete “${t.name}”?`, iconName: 'trash', iconKind: 'warn', body: '<p>Reports already copied there stay where they are.</p>',
+          buttons: [{ label: 'Cancel', value: false }, { label: 'Delete', kind: 'danger', value: true }] })) return;
+        try { api = await call('auth', { cmd: 'api_delete_target', args: { id: t.id } }, { quiet: true }); drawDests(); drawEditor(); toast(`Deleted “${t.name}”`); } catch (er) { toast(String(er), 'error', 8000); }
+      });
+    });
+  };
+
   // ---- files
   const filesEl = el.querySelector('.api-files');
   filesEl.innerHTML = `<div class="ar-card-t">${icon('clock', 15)} Finished files</div>
     <div class="api-keep"><span>Keep each report for download, in days:</span><input type="number" min="1" max="365" value="${api.retention_days}"><span>then delete it.</span><button class="btn sm" data-a="keep">${icon('save', 13)} Save</button></div>
-    <p class="muted">Copies a system asked to be put in a shared folder or bucket aren't deleted.</p>`;
+    <p class="muted">Copies in a destination aren't deleted.</p>`;
   filesEl.querySelector('[data-a="keep"]').addEventListener('click', async () => {
     const days = +filesEl.querySelector('input').value;
     try { api = await call('auth', { cmd: 'api_retention', args: { days } }, { quiet: true }); toast(`Files are kept ${days} days`); } catch (e) { toast(String(e), 'error'); }
@@ -172,4 +244,5 @@ export async function apiAdminPage(el) {
   drawList();
   drawEditor();
   drawReports();
+  drawDests();
 }

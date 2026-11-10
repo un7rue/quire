@@ -9,6 +9,7 @@ mod ai_restyle;
 mod ai_report;
 mod ai_admin;
 mod api_accounts;
+mod api_delivery;
 #[cfg(feature = "render")]
 mod api_jobs;
 mod audit;

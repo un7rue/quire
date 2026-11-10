@@ -77,7 +77,11 @@ the person's saved reports (*Saved*). Exports, briefs, CSVs and batch reports do
   `GET /api/v1/jobs/{id}` (status, pages, layout issues, values used); `GET /api/v1/jobs/{id}/file` (the PDF, or a zip
   of a batch); `GET /api/v1/jobs/{id}/files/{client_id}`; `GET /api/v1/templates`. A bad request is refused at once
   (401, 403, 404, 422); `Idempotency-Key` makes a retry return the first job; 60 new requests a minute per account
-  (429). Pages are drawn by the app's own drawing code in V8 (`src/render_js.rs`), with no browser. Jobs live in
+  (429). **Delivery:** Admin can have an account's reports copied to a destination — a folder on the server (a mounted
+  file share too) or an S3-compatible bucket (signed by curl, `--aws-sigv4`; its secret sealed) — in folders by
+  account, day and job; a request's `callback_url`, on a host Admin allows for the account, is POSTed the finished job,
+  signed (`X-Quire-Signature: sha256=` HMAC-SHA256 of `<X-Quire-Timestamp>.<body>` with the SHA-256 hex of the API key)
+  and tried again up to four times (`src/api_delivery.rs`). Pages are drawn by the app's own drawing code in V8 (`src/render_js.rs`), with no browser. Jobs live in
   `api/jobs/` in the data folder and survive a restart; their files are deleted after the retention days. Every request
   and report is in Activity under `api:<account>` (`src/api_jobs.rs`, checks: `node dev/web/api-checks.mjs`).
 - **Docker.** `docker build -t quire-server .` then

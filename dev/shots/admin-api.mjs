@@ -10,7 +10,8 @@ await send('Page.reload', {}); await sleep(3000);
 await ev(`document.querySelector('.lg-demo button[data-l=admin]')?.click()`); await sleep(3000);
 await ev(`(async () => { const i = await import('/ui/i18n.js'); const m = await import('/ui/state.js'); i.setAppLanguage('${lang}', m.render); })()`); await sleep(800);
 // from a clean start: no account of an earlier run
-await ev(`(async () => { const m = await import('/ui/state.js'); await m.call('auth', { cmd: 'api_delete_client', args: { id: 'client-portal' } }, { quiet: true }).catch(() => {}); })()`);
+await ev(`(async () => { const m = await import('/ui/state.js'); await m.call('auth', { cmd: 'api_delete_client', args: { id: 'client-portal' } }, { quiet: true }).catch(() => {});
+  const a = await m.call('auth', { cmd: 'api' }, { quiet: true }); for (const t of a.targets || []) await m.call('auth', { cmd: 'api_delete_target', args: { id: t.id } }, { quiet: true }).catch(() => {}); })()`);
 await ev(`document.querySelector('.adm-item[data-part="api"]')?.click()`); await sleep(2500);
 console.log('page:', await ev(`document.querySelector('.ar-head h2')?.innerText + ' · ' + (document.querySelector('.api-list')?.innerText || '').replace(/\\s+/g, ' ')`));
 await shot(`admin-api-empty-${lang}`);
@@ -34,6 +35,21 @@ await ev(`(() => { const tr = document.querySelector('.api-rep[data-id="uhnwi"] 
 console.log('product default:', await ev(`document.querySelector('.api-rep[data-id="uhnwi"] tr[data-p="product"] [data-k="default"]').value`));
 await ev(`document.querySelector('.api-reps').scrollIntoView()`); await sleep(400);
 await shot(`admin-api-reports-${lang}`);
+// a folder destination (inside the output folder), tested, then the account copies there and allows a callback host
+const destDir = (await import('node:path')).resolve(process.argv[2], 'dest');
+await ev(`document.querySelector('[data-a="dadd"]').click()`); await sleep(500);
+await ev(`(() => { const b = document.querySelector('.api-dform'); b.querySelector('[name=name]').value = 'Reports share'; b.querySelector('[name=folder]').value = ${JSON.stringify(destDir)}; })()`);
+await shot(`admin-api-dest-${lang}`);
+await ev(`document.querySelector('.modal-foot .btn.primary').click()`); await sleep(1200);
+console.log('destinations:', await ev(`document.querySelector('.api-dests table')?.innerText.replace(/\\s+/g, ' ')`));
+await ev(`document.querySelector('.api-dests [data-a="dtest"]').click()`); await sleep(1200);
+console.log('test:', await ev(`[...document.querySelectorAll('.toast')].map((t) => t.innerText).join(' | ')`));
+await ev(`document.querySelector('.api-row').click()`); await sleep(600);
+await ev(`(() => { const f = document.querySelector('.api-edit'); f.querySelector('[name=copy_to]').value = 'reports-share'; f.querySelector('[name=hooks]').value = 'crm.bank.local, hooks.bank.local:8443'; f.querySelector('[data-a="save"]').click(); })()`); await sleep(1200);
+console.log('account:', await ev(`(() => { const f = document.querySelector('.api-edit'); return f.querySelector('[name=copy_to]').value + ' · ' + f.querySelector('[name=hooks]').value; })()`));
+console.log('used by:', await ev(`document.querySelector('.api-dests tbody tr td:nth-child(3)')?.innerText`));
+await ev(`document.querySelector('.api-edit [name=hooks]').scrollIntoView({ block: 'center' })`); await sleep(300);
+await shot(`admin-api-delivery-${lang}`);
 // Activity has the changes
 const acts = await ev(`(async () => { const m = await import('/ui/state.js'); const r = await m.call('activity', { filter: { area: 'admin', limit: 5 } }, { quiet: true }); return r.rows.map((x) => x.detail).join(' | '); })()`);
 console.log('activity:', acts);

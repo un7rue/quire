@@ -3183,3 +3183,8 @@ body.adm-ai-on .ar-body[data-area="admin"] { padding-right: min(480px, 40vw); }
 .api-pt .hint { margin-top: 3px; }
 .api-keep { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-top: 8px; }
 .api-keep input { width: 70px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
+.api-dform { display: flex; flex-direction: column; gap: 12px; }
+.api-dform .seg { align-self: flex-start; }
+.api-dform select, .ad-grid select { height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-size: 13px; }
+.api-dacts { white-space: nowrap; text-align: right; }
+.api-dacts .btn + .btn { margin-left: 4px; }

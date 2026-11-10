@@ -9,7 +9,7 @@ use serde_json::{json, Value as Json};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use crate::host::{Host, H};
-use crate::{ai, ai_admin, ai_design, api_accounts, ai_report, ai_restyle, audit, auth, client_sample, data, dbconn, export, fonts, layout, looks, model, overview, period, proposal, proposals, python, query, sample, theme_studio, uhnwi_sample, uhnwi_theme, vm};
+use crate::{ai, ai_admin, ai_design, api_accounts, api_delivery, ai_report, ai_restyle, audit, auth, client_sample, data, dbconn, export, fonts, layout, looks, model, overview, period, proposal, proposals, python, query, sample, theme_studio, uhnwi_sample, uhnwi_theme, vm};
 
 mod report_api;
 #[cfg(feature = "render")]
@@ -2477,6 +2477,15 @@ fn auth_cmd(app: &mut App, cmd: &str, args: &Json) -> Result<Json, String> {
         "api_new_key" => app.audit("admin", "API key", &arg("id"), &format!("Made a new key for the API account “{}” (the old one stopped working)", arg("id")), Json::Null, err),
         "api_delete_client" => app.audit("admin", "delete API account", &arg("id"), &format!("Deleted the API account “{}”", arg("id")), Json::Null, err),
         "api_save_report" => app.audit("admin", "API report", &arg("id"), &format!("Changed what “{}” accepts over the API", arg("id")), args["settings"].clone(), err),
+        "api_save_target" => {
+            let t = &args["target"];
+            let mut data = t.clone();
+            if let Some(o) = data.as_object_mut() { o.remove("secret_key"); }
+            let name = t["name"].as_str().unwrap_or("");
+            app.audit("admin", if t["was"].as_str().unwrap_or("").is_empty() { "add API destination" } else { "change API destination" }, name, &format!("API destination “{name}”"), data, err);
+        }
+        "api_delete_target" => app.audit("admin", "delete API destination", &arg("id"), &format!("Deleted the API destination “{}”", arg("id")), Json::Null, err),
+        "api_test_target" => app.audit("admin", "test API destination", &arg("id"), &format!("Tested the API destination “{}”", arg("id")), Json::Null, err),
         "api_retention" => app.audit("admin", "API files", "", &format!("API files kept {} days", args["days"]), Json::Null, err),
         "save_report_source" | "save_source" | "delete_source" => app.audit("data", cmd, args["dataset"]["name"].as_str().unwrap_or(&arg("id")), &cmd.replace('_', " "), Json::Null, err),
         _ => {}
@@ -2593,6 +2602,28 @@ fn auth_cmd_inner(app: &mut App, cmd: &str, args: &Json) -> Result<Json, String>
             api_accounts::set_report(&mut st, &id, r, &defs)?;
             app.save_store(&st)?;
             Ok(api_admin_view(app, &st))
+        }
+        "api_save_target" => {
+            gate(app, &["admin"])?;
+            let e: api_accounts::ApiTargetEdit = serde_json::from_value(args["target"].clone()).map_err(|e| format!("Bad destination: {e}"))?;
+            let mut st = app.store();
+            let id = api_accounts::save_target(&mut st, e, &me)?;
+            app.save_store(&st)?;
+            Ok(json!({"id": id, "api": api_admin_view(app, &st)}))
+        }
+        "api_delete_target" => {
+            gate(app, &["admin"])?;
+            let mut st = app.store();
+            api_accounts::remove_target(&mut st, &arg("id"))?;
+            app.save_store(&st)?;
+            Ok(api_admin_view(app, &st))
+        }
+        "api_test_target" => {
+            // writes a small file there (and takes it away from a folder): can Quire reach it?
+            gate(app, &["admin"])?;
+            let st = app.store();
+            let t = st.api.targets.iter().find(|t| t.id == arg("id")).ok_or("No such destination.")?;
+            Ok(json!({"at": api_delivery::test(t)?}))
         }
         "api_retention" => {
             gate(app, &["admin"])?;
@@ -4618,6 +4649,7 @@ fn api_admin_view(app: &App, st: &auth::Store) -> Json {
     }).collect();
     json!({
         "clients": st.api.clients.iter().map(|c| c.public()).collect::<Vec<_>>(),
+        "targets": st.api.targets.iter().map(|t| t.public()).collect::<Vec<_>>(),
         "reports": reports,
         "retention_days": st.api.retention_days,
     })

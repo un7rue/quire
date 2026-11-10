@@ -15,7 +15,7 @@ The checks run before a change is called done, and how to run them yourself. Cha
 | Any change to selection or the inspector's tabs | Several widgets selected: shared settings, changes, moves and deletes reach all | `node dev/shots/multi-select.mjs <out>` (needs the web server) | 30 s |
 | A change to a screen (client list, dialogs, admin, AI panes) | The screen driven in a headless browser and screenshotted | `dev/shots/*.mjs` | 10–60 s |
 | Any change to Admin → API (`ui/apiadmin.js`, the access editor in `ui/areas.js`) | An account added, its key shown once and nowhere after, a report's parameters and default saved, Activity without the key | `node dev/shots/admin-api.mjs <out> [en\|ru]` (needs the web server) | 30 s |
-| Any change to the report API (`src/app/report_api.rs`, `src/api_accounts.rs`, `src/render_js.rs`) or to the drawing code it runs (`ui/render.js`, `ui/charts.js`, `ui/table.js`, `ui/util.js`…) | The API's tests with V8 built in, then its pages against the same report drawn in Chrome | `cargo test --lib --no-default-features --features render -- report_api render_js api_accounts api_jobs`, then `node dev/shots/api-render.mjs` | ~1 min (first build: V8 downloads) |
+| Any change to the report API (`src/app/report_api.rs`, `src/api_accounts.rs`, `src/render_js.rs`) or to the drawing code it runs (`ui/render.js`, `ui/charts.js`, `ui/table.js`, `ui/util.js`…) | The API's tests with V8 built in, then its pages against the same report drawn in Chrome | `cargo test --lib --no-default-features --features render -- report_api render_js api_accounts api_jobs api_delivery`, then `node dev/shots/api-render.mjs` | ~1 min (first build: V8 downloads) |
 | Any change to the report API's server side (`src/api_jobs.rs`, `src/bin/quire-server.rs`) | End to end against a running server: an account's key, one report, a batch's zip, refusals, Activity | `node dev/web/api-checks.mjs` ([below](#6-web-server-checks)) | 10 s |
 | **Every push to GitHub** | On Linux (Ubuntu 24.04): engine tests (with the renderer), the web server and its checks, the report API's checks, the desktop app, `.deb` and AppImage | GitHub Actions, `.github/workflows/linux.yml`; `gh run watch` | ~20 min |
 | Before a release that changes what users do | The **Test** steps in the user guide, by a person | [ui/help/guide.md](ui/help/guide.md), each chapter's *Test* list | — |
@@ -159,10 +159,14 @@ node dev/web/api-checks.mjs http://127.0.0.1:8771
 An administrator makes an API account; with its key: no key or a wrong one refused (401); the reports it may ask
 for; one report (202, a job, done with its pages and values, the PDF); the same `Idempotency-Key` getting the same job;
 a batch of 3 (409 while running, then a zip, and each PDF on its own); another banker's client refusing the whole batch
-(403, the client named); an unknown client (404), a parameter or period that doesn't fit (422); Activity with the
+(403, the client named); an unknown client (404), a parameter or period that doesn't fit (422); a folder destination
+tested; a callback to a host not allowed refused (422); a batch copied to the destination and called back once, the
+signature checked with the key alone as the caller's team would (Node's crypto); Activity with the
 requests and reports under the account, never the key; a switched-off account's key refused. On 10 Nov 2026 (dev
 build, 2 workers): one report 1.0 s, a batch of 3 in 1.8 s. The unit tests (`api_jobs`, with `--features render`):
-jobs kept across a restart and finished, files deleted past the retention days, the rate limit.
+jobs kept across a restart and finished, files deleted past the retention days, the rate limit, copies and a signed
+callback, a callback not taken tried again then failed; `api_delivery`: HMAC against RFC 4231, folder copies, an S3
+upload as a signed PUT (to a stand-in server), signed callbacks; `api_accounts`: callback hosts, destinations.
 
 **Report API pages against the browser:** `draws_the_report_without_a_browser` writes the report it drew to
 `$TMPDIR/quire_api_report` (`.json` its state, `.svg` its pages, `.pdf`); `node dev/shots/api-render.mjs` draws the same

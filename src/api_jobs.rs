@@ -8,6 +8,10 @@
 //!     GET  /api/v1/jobs/{id}/files/{client_id}   one client's PDF of a batch
 //!     GET  /api/v1/templates            the reports this account may ask for, and what each accepts
 //!
+//! A request may name a `callback_url` (on a host Admin allows for the account): the finished job
+//! is POSTed there, signed (src/api_delivery.rs), and tried again a few times if it isn't taken.
+//! An account Admin gives a destination has each report copied there too.
+//!
 //! Requests carry `Authorization: Bearer <key>`; an `Idempotency-Key` header makes a retried request
 //! return the job it made the first time. Jobs are kept in the data folder (`api/jobs/<id>/`), so a
 //! restarted server finishes them; their files are deleted after Admin's retention days. Worker
@@ -24,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 
 use crate::app::{draw, ApiDesk, PeriodAsked, Refusal, Request};
-use crate::{api_accounts, audit, auth};
+use crate::{api_accounts, api_delivery, audit, auth};
 
 /// Clients in one request at most.
 pub const MAX_CLIENTS: usize = 2000;
@@ -33,6 +37,11 @@ const POSTS_PER_MINUTE: u32 = 60;
 const GETS_PER_MINUTE: u32 = 1200;
 /// How often finished jobs past their retention are looked for.
 const SWEEP_EVERY: Duration = Duration::from_secs(3600);
+/// Waits before each try of a callback (seconds).
+#[cfg(not(test))]
+const CALLBACK_WAITS: [u64; 4] = [0, 10, 60, 300];
+#[cfg(test)]
+const CALLBACK_WAITS: [u64; 3] = [0, 0, 0];
 
 /// An answer: status, type, body, extra headers.
 pub struct Response {
@@ -71,6 +80,22 @@ struct JobRequest {
     /// Only "pdf" for now.
     #[serde(default)]
     format: Option<String>,
+    /// Called (POST, signed) when the job is done.
+    #[serde(default)]
+    callback_url: Option<String>,
+}
+
+/// A job's callback: where, and how it went.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+struct Callback {
+    url: String,
+    /// pending, sent or failed
+    status: String,
+    attempts: u32,
+    /// The last answer's status (0: nobody answered).
+    code: u16,
+    error: Option<String>,
+    at: Option<String>,
 }
 
 /// A request accepted: its reports, one per client.
@@ -89,6 +114,8 @@ struct Job {
     batch: bool,
     idempotency: Option<String>,
     items: Vec<Item>,
+    #[serde(default)]
+    callback: Option<Callback>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -106,6 +133,9 @@ struct Item {
     file: Option<String>,
     name: String,
     bytes: u64,
+    /// The copy to the account's destination: {status, at} or {status, error}.
+    #[serde(default)]
+    copy: Option<Json>,
 }
 
 impl Job {
@@ -171,7 +201,9 @@ impl ApiService {
             ready: Condvar::new(),
             rate: Mutex::new(HashMap::new()),
         });
-        svc.load();
+        for id in svc.load() {
+            svc.send_callback(&id);
+        }
         for n in 0..workers.max(1) {
             let s = svc.clone();
             let _ = std::thread::Builder::new().name(format!("api-worker-{n}")).spawn(move || s.work());
@@ -192,14 +224,19 @@ impl ApiService {
         auth::load(&self.data.join("users.json"))
     }
 
-    /// The jobs in the data folder; reports not finished go back in the queue.
-    fn load(&self) {
-        let Ok(rd) = std::fs::read_dir(self.dir()) else { return };
+    /// The jobs in the data folder; reports not finished go back in the queue. Returns the finished
+    /// jobs whose callback is still to be made.
+    fn load(&self) -> Vec<String> {
+        let Ok(rd) = std::fs::read_dir(self.dir()) else { return vec![] };
         let mut jobs = lock(&self.jobs);
         let mut queue = lock(&self.queue);
         let mut found: Vec<Job> = rd.flatten().filter_map(|e| std::fs::read_to_string(e.path().join("job.json")).ok()).filter_map(|t| serde_json::from_str::<Job>(&t).ok()).collect();
         found.sort_by(|a, b| a.created.cmp(&b.created));
+        let mut calls = Vec::new();
         for mut j in found {
+            if j.finished.is_some() && j.callback.as_ref().is_some_and(|c| c.status == "pending") {
+                calls.push(j.id.clone());
+            }
             for (k, it) in j.items.iter_mut().enumerate() {
                 if it.status == "queued" || it.status == "running" {
                     it.status = "queued".into();
@@ -208,6 +245,7 @@ impl ApiService {
             }
             jobs.insert(j.id.clone(), j);
         }
+        calls
     }
 
     /// Writes a job whole (never half a file).
@@ -301,6 +339,13 @@ impl ApiService {
         if q.format.as_deref().is_some_and(|f| f != "pdf") {
             return refuse(Refusal { status: 422, message: "The format is “pdf” (the only one for now).".into() }, raw);
         }
+        let callback = match q.callback_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+            Some(url) => match api_accounts::callback_ok(account, url) {
+                Ok(()) => Some(Callback { url: url.to_string(), status: "pending".into(), ..Default::default() }),
+                Err(e) => return refuse(Refusal { status: 422, message: e }, raw),
+            },
+            None => None,
+        };
         let idem = idem.filter(|k| !k.is_empty()).map(|k| k.chars().take(200).collect::<String>());
         if let Some(k) = &idem {
             let before = lock(&self.jobs).values().find(|j| j.account == account.id && j.idempotency.as_deref() == Some(k.as_str())).cloned();
@@ -369,6 +414,7 @@ impl ApiService {
             batch,
             idempotency: idem,
             items,
+            callback,
         };
         self.save(&job);
         let n = job.items.len();
@@ -404,6 +450,9 @@ impl ApiService {
             if let Some(e) = &i.error {
                 v["error"] = e.clone();
             }
+            if let Some(c) = &i.copy {
+                v["copy"] = c.clone();
+            }
             v
         }).collect();
         let status = j.status();
@@ -414,6 +463,7 @@ impl ApiService {
             "reports": j.items.len(), "done": done, "failed": j.items.iter().filter(|i| i.status == "failed").count(),
             "file": if done > 0 && (status == "done" || status == "partial") { json!(format!("{base}/file")) } else { Json::Null },
             "items": items,
+            "callback": j.callback.as_ref().map(|c| json!({"url": c.url, "status": c.status, "attempts": c.attempts, "code": c.code, "error": c.error, "at": c.at})),
         })
     }
 
@@ -468,7 +518,7 @@ impl ApiService {
 
     // ---------------------------------------------------------------- workers
 
-    fn work(&self) {
+    fn work(self: &Arc<Self>) {
         loop {
             let task = {
                 let mut q = lock(&self.queue);
@@ -484,7 +534,7 @@ impl ApiService {
     }
 
     /// Makes one report of a job.
-    fn run(&self, id: &str, k: usize) {
+    fn run(self: &Arc<Self>, id: &str, k: usize) {
         let job = {
             let mut jobs = lock(&self.jobs);
             let Some(j) = jobs.get_mut(id) else { return };
@@ -500,12 +550,34 @@ impl ApiService {
         let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.make(&job, &item))).unwrap_or_else(|_| Err(Refusal { status: 500, message: "The report failed to draw.".into() }));
         let who = format!("api:{}", job.account);
         let mut file = None;
-        let result = made.and_then(|(drawn, used)| {
+        let mut target = None;
+        let result = made.and_then(|(drawn, used, to)| {
             let f = format!("{:04}-{}.pdf", k + 1, file_safe(&item.client_id));
             std::fs::write(self.dir().join(&job.id).join(&f), &drawn.pdf).map_err(|e| Refusal { status: 500, message: format!("Couldn't keep the file: {e}") })?;
             file = Some(f);
+            target = to;
             Ok((drawn, used))
         });
+        // the copy to the account's destination (a failed copy leaves the report downloadable)
+        let copy = match (&result, &target) {
+            (Ok((drawn, _)), Some(t)) => {
+                let day = job.created.get(..10).unwrap_or("");
+                let rel = if t.kind == "s3" {
+                    format!("{}/{day}/{}/{}.pdf", job.account, job.id, api_delivery::safe_name(&item.client_id))
+                } else {
+                    format!("{}/{day}/{}/{} — {}.pdf", job.account, job.id, api_delivery::safe_name(&item.client_id), api_delivery::safe_name(&drawn.name))
+                };
+                let r = api_delivery::copy(t, &rel, &drawn.pdf);
+                if let Err(e) = &r {
+                    audit::record(Some(&self.data), &who, "api", "api copy", &item.client, &format!("Copy to “{}” failed", t.name), json!({"job": job.id, "client_id": item.client_id, "to": t.place()}), Some(e));
+                }
+                Some(match r {
+                    Ok(at) => json!({"status": "done", "to": t.name, "at": at}),
+                    Err(e) => json!({"status": "failed", "to": t.name, "error": e}),
+                })
+            }
+            _ => None,
+        };
         let mut jobs = lock(&self.jobs);
         let Some(j) = jobs.get_mut(id) else { return };
         let it = &mut j.items[k];
@@ -518,6 +590,7 @@ impl ApiService {
                 it.used = used.clone();
                 it.name = drawn.name.clone();
                 it.file = file;
+                it.copy = copy;
                 audit::record(Some(&self.data), &who, "document", "api export", &item.client,
                     &format!("API report · {} · {} pages{}", item.client, drawn.pages, if drawn.issues > 0 { format!(" · {} layout issue(s)", drawn.issues) } else { String::new() }),
                     json!({"job": job.id, "client": item.client, "client_id": item.client_id, "template": job.template, "period": {"start": job.start, "end": job.end}, "format": "pdf"}), None);
@@ -529,16 +602,75 @@ impl ApiService {
                     json!({"job": job.id, "client_id": item.client_id, "template": job.template}), Some(&r.message));
             }
         }
-        if !j.items.iter().any(|i| i.status == "queued" || i.status == "running") {
+        let finished = !j.items.iter().any(|i| i.status == "queued" || i.status == "running");
+        if finished {
             j.finished = Some(chrono::Local::now().to_rfc3339());
         }
         let snapshot = j.clone();
         drop(jobs);
         self.save(&snapshot);
+        if finished && snapshot.callback.is_some() {
+            self.send_callback(id);
+        }
     }
 
-    /// The report itself, as the job's account (as it is now: switched off or removed, it stops).
-    fn make(&self, job: &Job, item: &Item) -> Result<(crate::app::Drawn, Json), Refusal> {
+    /// Calls the job's callback back (on a thread of its own), trying again a few times; the
+    /// outcome is kept with the job and in Activity.
+    fn send_callback(self: &Arc<Self>, id: &str) {
+        let (svc, id) = (self.clone(), id.to_string());
+        let _ = std::thread::Builder::new().name("api-callback".into()).spawn(move || {
+            for wait in CALLBACK_WAITS {
+                std::thread::sleep(Duration::from_secs(wait));
+                let Some(job) = lock(&svc.jobs).get(&id).cloned() else { return };
+                let Some(cb) = job.callback.clone().filter(|c| c.status == "pending") else { return };
+                // signed with the account's key as it is now
+                let account = svc.store().api.clients.into_iter().find(|c| c.id == job.account && c.active && !c.sign_key.is_empty());
+                let r = match &account {
+                    Some(a) => api_delivery::call_back(&cb.url, &a.sign_key, &job.id, &svc.view(&job).to_string()),
+                    None => Err("The API account was switched off or removed.".into()),
+                };
+                let last = cb.attempts + 1 >= CALLBACK_WAITS.len() as u32 || account.is_none();
+                let mut jobs = lock(&svc.jobs);
+                let Some(j) = jobs.get_mut(&id) else { return };
+                let Some(c) = j.callback.as_mut() else { return };
+                c.attempts += 1;
+                c.at = Some(chrono::Local::now().to_rfc3339());
+                match r {
+                    Ok(code) if (200..300).contains(&code) => {
+                        c.status = "sent".into();
+                        c.code = code;
+                        c.error = None;
+                    }
+                    Ok(code) => {
+                        c.code = code;
+                        c.error = Some(format!("It answered {code}."));
+                    }
+                    Err(e) => {
+                        c.code = 0;
+                        c.error = Some(e);
+                    }
+                }
+                if c.status == "pending" && last {
+                    c.status = "failed".into();
+                }
+                let done = c.status != "pending";
+                let c = c.clone();
+                let snapshot = j.clone();
+                drop(jobs);
+                svc.save(&snapshot);
+                if done {
+                    audit::record(Some(&svc.data), &format!("api:{}", snapshot.account), "api", "api callback", &c.url,
+                        &format!("Callback {} after {} tr{}", if c.status == "sent" { "delivered" } else { "failed" }, c.attempts, if c.attempts == 1 { "y" } else { "ies" }),
+                        json!({"job": snapshot.id, "url": c.url, "code": c.code}), c.error.as_deref().filter(|_| c.status != "sent"));
+                    return;
+                }
+            }
+        });
+    }
+
+    /// The report itself, as the job's account (as it is now: switched off or removed, it stops),
+    /// with the destination it copies to.
+    fn make(&self, job: &Job, item: &Item) -> Result<(crate::app::Drawn, Json, Option<api_accounts::ApiTarget>), Refusal> {
         let st = self.store();
         let account = st.api.clients.iter().find(|c| c.id == job.account && c.active)
             .ok_or_else(|| Refusal { status: 403, message: "The API account was switched off or removed.".into() })?;
@@ -551,7 +683,8 @@ impl ApiService {
         };
         let made = desk.make(&req, chrono::Local::now().date_naive())?;
         let drawn = draw(&self.ui, &made)?;
-        Ok((drawn, made.used))
+        let to = st.api.targets.iter().find(|t| !account.copy_to.is_empty() && t.id == account.copy_to).cloned();
+        Ok((drawn, made.used, to))
     }
 
     // ---------------------------------------------------------------- retention
@@ -740,7 +873,7 @@ mod tests {
         assert_eq!(call(&svc, &key, "GET", "/api/v1/nothing", Json::Null).0, 404);
         // another account's job is as good as missing
         lock(&svc.jobs).insert("jother".into(), Job { id: "jother".into(), account: "someone".into(), created: String::new(), finished: None, template: "uhnwi".into(),
-            start: String::new(), end: String::new(), params: BTreeMap::new(), batch: false, idempotency: None, items: vec![] });
+            start: String::new(), end: String::new(), params: BTreeMap::new(), batch: false, idempotency: None, items: vec![], callback: None });
         assert_eq!(call(&svc, &key, "GET", "/api/v1/jobs/jother", Json::Null).0, 404);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -770,7 +903,7 @@ mod tests {
         // a job written as a stopped server left it: one report still queued, for an account that is gone
         let job = Job { id: "jkept".into(), account: "crm".into(), created: chrono::Local::now().to_rfc3339(), finished: None, template: "uhnwi".into(),
             start: "2026-01-01".into(), end: "2026-03-31".into(), params: BTreeMap::new(), batch: false, idempotency: None,
-            items: vec![Item { client_id: "C0001".into(), client: "X".into(), status: "running".into(), ..Default::default() }] };
+            items: vec![Item { client_id: "C0001".into(), client: "X".into(), status: "running".into(), ..Default::default() }], callback: None };
         svc.save(&job);
         let mut st = auth::load(&dir.join("users.json"));
         st.api.clients[0].active = false;
@@ -789,6 +922,83 @@ mod tests {
         assert_eq!(svc.sweep(chrono::Local::now()), 0, "kept within the days");
         assert_eq!(svc.sweep(chrono::Local::now() + chrono::Duration::days(8)), 1);
         assert!(!dir.join("api/jobs/jkept").exists());
+        let _ = key;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A job with a callback and a destination: each report is copied there, and when the job is
+    /// done the callback gets it, signed with the account's key; a callback to a host Admin didn't
+    /// allow is refused at once.
+    #[test]
+    fn reports_are_copied_and_called_back() {
+        if crate::dbconn::demo_path().is_none() { return }
+        let (dir, key) = server();
+        let (hook, seen) = crate::api_delivery::tests::stand_in(200);
+        let share = dir.join("share");
+        let mut st = auth::load(&dir.join("users.json"));
+        let t = api_accounts::save_target(&mut st, api_accounts::ApiTargetEdit { name: "Share".into(), kind: "folder".into(), folder: share.display().to_string(), ..Default::default() }, "admin").unwrap();
+        st.api.clients[0].copy_to = t;
+        st.api.clients[0].callback_hosts = vec!["127.0.0.1".into()];
+        auth::save(&dir.join("users.json"), &st).unwrap();
+        let svc = ApiService::start(&dir, &ui(), 2);
+        let mine = own_clients(&dir);
+        let (s, j, _) = call(&svc, &key, "POST", "/api/v1/reports", json!({"clients": [mine[0], mine[1]], "period": {"preset": "last_quarter"}, "callback_url": format!("{hook}/quire")}));
+        assert_eq!(s, 202, "{j}");
+        let id = j["job_id"].as_str().unwrap().to_string();
+        let j = wait(&svc, &key, &id);
+        assert_eq!(j["status"], "done", "{j}");
+        // copied: one PDF per client, under the account, the day and the job
+        for it in j["items"].as_array().unwrap() {
+            assert_eq!(it["copy"]["status"], "done", "{it}");
+            let at = it["copy"]["at"].as_str().unwrap();
+            assert!(at.contains(&format!("crm/{}/{id}/", &chrono::Local::now().format("%Y-%m-%d"))) || at.contains("/crm/"), "{at}");
+            assert!(std::fs::read(at).unwrap().starts_with(b"%PDF"));
+        }
+        // called back once, signed
+        for _ in 0..100 {
+            if !seen.lock().unwrap().is_empty() { break }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let got = seen.lock().unwrap().first().cloned().expect("the callback came");
+        let h = |n: &str| got.2.iter().find(|(k, _)| k == n).map(|(_, v)| v.clone()).unwrap_or_default();
+        assert_eq!((got.0.as_str(), got.1.as_str()), ("POST", "/quire"));
+        let body = String::from_utf8(got.3.clone()).unwrap();
+        let ts: i64 = h("x-quire-timestamp").parse().unwrap();
+        assert_eq!(h("x-quire-signature"), crate::api_delivery::signature(&api_accounts::sign_key_of(&key), ts, &body), "the caller can check it with its key");
+        let sent: Json = serde_json::from_str(&body).unwrap();
+        assert_eq!((sent["job_id"].as_str(), sent["status"].as_str()), (Some(id.as_str()), Some("done")));
+        for _ in 0..100 {
+            if lock(&svc.jobs)[&id].callback.as_ref().unwrap().status == "sent" { break }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(call(&svc, &key, "GET", &format!("/api/v1/jobs/{id}"), Json::Null).1["callback"]["status"], "sent");
+        // a host Admin didn't allow
+        let (s, j, _) = call(&svc, &key, "POST", "/api/v1/reports", json!({"client_id": mine[0], "period": {"preset": "ytd"}, "callback_url": "https://elsewhere.example/hook"}));
+        assert_eq!(s, 422, "{j}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A callback nobody takes is tried again, then marked failed.
+    #[test]
+    fn a_callback_not_taken_is_tried_again() {
+        let (dir, key) = server();
+        let (hook, seen) = crate::api_delivery::tests::stand_in(500);
+        let mut st = auth::load(&dir.join("users.json"));
+        st.api.clients[0].callback_hosts = vec!["127.0.0.1".into()];
+        auth::save(&dir.join("users.json"), &st).unwrap();
+        let svc = ApiService::start(&dir, &ui(), 1);
+        let job = Job { id: "jcb".into(), account: "crm".into(), created: chrono::Local::now().to_rfc3339(), finished: Some(chrono::Local::now().to_rfc3339()), template: "uhnwi".into(),
+            start: "2026-01-01".into(), end: "2026-03-31".into(), params: BTreeMap::new(), batch: false, idempotency: None, items: vec![],
+            callback: Some(Callback { url: format!("{hook}/x"), status: "pending".into(), ..Default::default() }) };
+        lock(&svc.jobs).insert(job.id.clone(), job);
+        svc.send_callback("jcb");
+        for _ in 0..200 {
+            if lock(&svc.jobs)["jcb"].callback.as_ref().unwrap().status != "pending" { break }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let c = lock(&svc.jobs)["jcb"].callback.clone().unwrap();
+        assert_eq!((c.status.as_str(), c.attempts, c.code), ("failed", CALLBACK_WAITS.len() as u32, 500));
+        assert_eq!(seen.lock().unwrap().len(), CALLBACK_WAITS.len());
         let _ = key;
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -5,7 +5,13 @@
 //       --port 8771 --data "$(mktemp -d)"
 //   node dev/web/api-checks.mjs [http://127.0.0.1:8771]
 //
-// It adds an account “API check” and deletes it at the end.
+// It adds an account “API check” and a destination (a folder in the system's temp folder), runs a
+// small server of its own for the callback, and deletes what it added at the end.
+import http from 'node:http';
+import crypto from 'node:crypto';
+import { mkdtempSync, readdirSync, statSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const BASE = process.argv[2] || 'http://127.0.0.1:8771';
 let failed = 0;
 const check = (name, ok, got) => { if (!ok) failed++; console.log(`${ok ? '✓' : '✗'} ${name}${ok ? '' : `  — got: ${String(JSON.stringify(got)).slice(0, 300)}`}`); };
@@ -22,6 +28,7 @@ const admin = async (cmd, args = {}) => {
 };
 await admin('auth', { cmd: 'login', args: { login: 'admin', password: 'quire' } });
 await admin('auth', { cmd: 'api_delete_client', args: { id: 'api-check' } }).catch(() => {});
+for (const t of (await admin('auth', { cmd: 'api' })).targets.filter((x) => x.name === 'API check share')) await admin('auth', { cmd: 'api_delete_target', args: { id: t.id } }).catch(() => {});
 const made = await admin('auth', { cmd: 'api_save_client', args: { client: { name: 'API check', active: true, access: { all: false, coverage: ['S0001'], sources: [], clients: [] } } } });
 const KEY = made.key;
 check('an API account gets its key once', /^qk\.api-check\./.test(KEY || ''), made);
@@ -81,6 +88,33 @@ check('a parameter the report doesn’t take: 422', fixed.status === 422, fixed.
 const bad = await api('POST', '/api/v1/reports', { client_id: mine[0], period: { preset: 'next_year' } });
 check('an unknown period: 422', bad.status === 422, bad.json);
 
+// delivery: a destination folder and a callback, as the calling team would check it (with the key only)
+const share = mkdtempSync(join(tmpdir(), 'quire-share-'));
+const got = [];
+const hook = http.createServer((q, r) => { let b = ''; q.on('data', (c) => { b += c; }); q.on('end', () => { got.push({ path: q.url, headers: q.headers, body: b }); r.end('ok'); }); });
+await new Promise((res) => hook.listen(0, '127.0.0.1', res));
+const dest = await admin('auth', { cmd: 'api_save_target', args: { target: { name: 'API check share', kind: 'folder', folder: share } } });
+const tested = await admin('auth', { cmd: 'api_test_target', args: { id: dest.id } }).catch((e) => ({ error: String(e) }));
+check('a folder destination is tested', !!tested.at, tested);
+await admin('auth', { cmd: 'api_save_client', args: { client: { was: 'api-check', name: 'API check', active: true, access: { all: false, coverage: ['S0001'], sources: [], clients: [] }, copy_to: dest.id, callback_hosts: ['127.0.0.1'] } } });
+const refusedHook = await api('POST', '/api/v1/reports', { client_id: mine[0], period: { preset: 'ytd' }, callback_url: 'https://elsewhere.example/hook' });
+check('a callback to a host not allowed: 422', refusedHook.status === 422, refusedHook.json);
+const t2 = Date.now();
+const withHook = await api('POST', '/api/v1/reports', { clients: mine.slice(0, 2), period: { preset: 'last_quarter' }, callback_url: `http://127.0.0.1:${hook.address().port}/quire/done` });
+const j3 = await wait(withHook.json.job_id);
+check(`a batch with a destination and a callback: done (${((Date.now() - t2) / 1000).toFixed(1)} s)`, j3?.status === 'done', j3);
+const files = (function walk(d) { return readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; }); })(share).filter((f) => f.endsWith('.pdf'));
+check('…each report copied to the destination, by account, day and job', files.length === 2 && files.every((f) => f.includes(`/api-check/`) && f.includes(`/${withHook.json.job_id}/`) && readFileSync(f).subarray(0, 4).toString() === '%PDF') && j3.items.every((i) => i.copy?.status === 'done'), files);
+for (let i = 0; i < 40 && !got.length; i++) await new Promise((res) => setTimeout(res, 250));
+const cb = got[0];
+const signKey = crypto.createHash('sha256').update(KEY).digest('hex');
+const expect = cb && 'sha256=' + crypto.createHmac('sha256', signKey).update(`${cb.headers['x-quire-timestamp']}.${cb.body}`).digest('hex');
+check('…called back once, with the job', got.length === 1 && cb.path === '/quire/done' && JSON.parse(cb.body).job_id === withHook.json.job_id, got.map((g) => g.path));
+check('…signed: the caller checks it with its key', !!cb && cb.headers['x-quire-signature'] === expect && Math.abs(Date.now() / 1000 - +cb.headers['x-quire-timestamp']) < 120, cb?.headers);
+for (let i = 0; i < 20; i++) { if ((await api('GET', `/api/v1/jobs/${withHook.json.job_id}`)).json.callback?.status === 'sent') break; await new Promise((res) => setTimeout(res, 250)); }
+check('…and the job says the callback was delivered', (await api('GET', `/api/v1/jobs/${withHook.json.job_id}`)).json.callback?.status === 'sent');
+hook.close();
+
 // Activity has it, under the account, and never the key
 const log = await admin('activity', { filter: { limit: 200 } });
 const rows = log.rows.filter((r) => r.user === 'api:api-check');
@@ -91,6 +125,7 @@ check('…and never the key', !JSON.stringify(log).includes(KEY.split('.').pop()
 await admin('auth', { cmd: 'api_save_client', args: { client: { was: 'api-check', name: 'API check', active: false, access: { all: false, coverage: ['S0001'], sources: [], clients: [] } } } });
 check('switched off: its key is refused', (await api('GET', '/api/v1/templates')).status === 401);
 await admin('auth', { cmd: 'api_delete_client', args: { id: 'api-check' } });
+await admin('auth', { cmd: 'api_delete_target', args: { id: dest.id } });
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 process.exit(failed ? 1 : 0);

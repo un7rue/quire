@@ -22,6 +22,13 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
   account. Jobs survive a restart; their files are deleted after the days set in Admin → API. Each request and report
   is in Activity under the account, with a new *API* filter there. One 18-page report takes about a second
   (`src/api_jobs.rs`; README *On a server*).
+- **Reports delivered where the bank keeps them.** In Admin → API, *Destinations*: a folder on the server (a mounted
+  file share too) or an S3-compatible bucket (AWS, MinIO, Yandex Object Storage…), with a *Test* button. An account set
+  to copy there gets each report copied, in folders by account, day and job; a failed copy leaves the report
+  downloadable and shows in the job and in Activity. S3 secret keys are sealed on the server.
+- **Callbacks.** A request can name a `callback_url`: when the job is done Quire POSTs it there, signed so the
+  caller's team can check it came from Quire using only their API key, and tries again up to four times. Only hosts
+  Admin lists for the account are called (`src/api_delivery.rs`).
 
 - **Admin → API** (on the web server): an account for each system that will ask for reports — a CRM, a client portal,
   a scheduler. Each has its own key, the clients and products it may report on, and the reports it may ask for. The key
