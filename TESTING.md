@@ -169,6 +169,24 @@ jobs kept across a restart and finished, files deleted past the retention days, 
 callback, a callback not taken tried again then failed; `api_delivery`: HMAC against RFC 4231, folder copies, an S3
 upload as a signed PUT (to a stand-in server), signed callbacks; `api_accounts`: callback hosts, destinations.
 
+**Report API load:** `node dev/load/api.mjs [--url …] [--batches 3] [--singles 20] [--pid <server pid>]` — quarter-end
+batches (every client the bank has, 41 in the demo database) and single requests arriving a second apart, from one API
+account; it prints reports a minute, how long single requests wait, failures and the server's memory. Measured on a
+10-core Mac (10 Nov 2026, release build, 3 batches + 20 singles = 143 reports, 2834 pages, none failed):
+
+| `--api-workers` | Reports a minute | A single request, while the batches run (median · slowest) | Memory at most (`ps`) |
+|---|---|---|---|
+| 1 | 83 | 1.6 s · 1.6 s | 1.0 GB |
+| 2 | 150 | — | 1.1 GB |
+| 4 | 253 | 1.1 s · 2.1 s (19.6 s · 27.2 s before single requests went first) | 1.6–2.0 GB |
+| 8 | 366 | 1.6 s · 2.6 s | 3.0 GB |
+
+So 1000 clients take about 4 minutes with 4 workers, under 3 with 8. A report costs about 0.75 CPU-second (data,
+drawing, PDF); the workers scale until the cores run out. **Memory isn't leaking:** over six rounds (738 reports) on
+one server `ps` creeps from 1.5 to 2.1 GB, but `leaks` finds none and the live allocations stay at about 130 MB
+(128 → 132 → 131 MB, round after round; physical footprint ~740 MB). The rest is freed memory the allocator keeps for
+the next reports. Each worker's V8 heap stays under 100 MB (it is cleaned up past 96 MB). Not yet measured on Linux.
+
 **The description and the calling teams' guide.** After a change to the API, lint the description
 (`npx @redocly/cli@1.25.0 lint docs/report-api/openapi.json`: valid; two warnings — the callback and the description
 itself have no error answers — are expected) and keep `docs/report-api/README.md`'s examples to what the server sends.

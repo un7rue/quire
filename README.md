@@ -89,6 +89,9 @@ the person's saved reports (*Saved*). Exports, briefs, CSVs and batch reports do
 - **Docker.** `docker build -t quire-server .` then
   `docker run -d -p 8766:8766 -v quire-data:/data -e QUIRE_SECRET_KEY='…' quire-server` (Python 3 with pandas and curl
   inside; the demo database at `QUIRE_DEMO_DB`).
+- **Report API load.** `node dev/load/api.mjs`: quarter-end batches and single requests at once. On a 10-core Mac
+  (release build) about 80 reports a minute per worker, 250 with 4 and 365 with 8; single requests go before batches
+  (ready in 1–3 s while batches run); memory 1–3 GB by workers, no leak (TESTING.md § 6).
 - **Load.** `node dev/load/reports.mjs <people> <url>`: that many bankers at once, each signing in and opening a
   client's report. A person's sign-in, report and one period change cost about 3 CPU-seconds, nearly all of it the
   report's SQL over the bank data, so the server serves about as many people at once as it has cores (TESTING.md § 6).

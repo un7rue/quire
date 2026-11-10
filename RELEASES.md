@@ -32,6 +32,8 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
 - **A guide for the teams that call it** (`docs/report-api/README.md`): a quick start, every field and error, and how
   to check a callback's signature in Python and Node (both run against a real callback). The OpenAPI 3.1 description
   (`docs/report-api/openapi.json`) is served at `/api/v1/openapi.json`; a test keeps it in step with the routes.
+- **A load check for the API** (`dev/load/api.mjs`): about 250 reports a minute with 4 workers, 365 with 8, on a
+  10-core Mac; memory checked for leaks (none) over 738 reports (TESTING.md § 6).
 - **The user guide** has *The report API* (chapter 1, Admin area): what Admin → API controls, with test steps.
 
 - **Admin → API** (on the web server): an account for each system that will ask for reports — a CRM, a client portal,
@@ -51,6 +53,10 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
 
 ### Improved
 
+- **A single report doesn't wait behind a batch.** Reports asked for one client at a time (a CRM's click) are made
+  before the batches already waiting: with three quarter-end batches running, one is ready in about a second instead
+  of 20 (`src/api_jobs.rs`).
+- **The page-drawing engine gives memory back** after a large report (past 96 MB of heap) (`src/render_js.rs`).
 - **Client access preview in Russian.** *Coverage* and the "Sees 5 clients" line under a person's access are translated.
 - `ui/util.js` loads outside a browser (no canvas or `navigator` needed at start), so the drawing code runs on the server.
 

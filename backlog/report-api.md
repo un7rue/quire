@@ -1,6 +1,6 @@
 # Report API for other systems
 
-> **Status:** agreed 10 Nov 2026 — see *Decisions*; steps 1–6 done 10 Nov 2026 (the core call, the V8 renderer, Admin → API, the endpoints and jobs, delivery, docs); left: step 7 (load test)
+> **Status:** agreed 10 Nov 2026 — see *Decisions*; done 10 Nov 2026 — all seven steps (the core call, the V8 renderer, Admin → API, the endpoints and jobs, delivery, docs, load test); open: Docker build, a real S3 bucket, memory on Linux
 > **Goal:** other systems (CRM, client portal, a scheduler…) ask Quire for a client's report over an API — **client id, period, template, products** (what a user picks in the app) — and get a PDF or PowerPoint back.
 
 ---
@@ -99,7 +99,7 @@ Shares the server part with [web-server-mode.md](web-server-mode.md) (stage 1: a
 4. ✅ *(10 Nov 2026: `src/api_jobs.rs`, routes in `src/bin/quire-server.rs`; checked by `dev/web/api-checks.mjs`, also in CI)* **Endpoints and jobs** in `quire-server` (built with `--features render`): `POST /api/v1/reports` (one client or a batch) → `202 { job_id }`; `GET /api/v1/jobs/{id}` (status, values used, page count, layout issues); `GET /api/v1/jobs/{id}/file` (the PDF, or a zip for a batch); `GET /api/v1/templates` (what each report accepts); a job queue with worker threads (one V8 engine each); files kept for the retention days, then deleted; each request in Activity; idempotency key; rate limits. Dockerfile and CI build with the renderer.
 5. ✅ *(10 Nov 2026: `src/api_delivery.rs`; Admin → API *Destinations*; checked by `dev/web/api-checks.mjs`)* **Delivery** — copies are set per account by Admin, not by the request; callbacks only to hosts Admin allows per account, signed with HMAC-SHA256 keyed by SHA-256 of the API key: `callback_url` POSTed when a job finishes (signed with the caller's key); copies to a folder / file share or an S3-compatible bucket, set in Admin → API.
 6. ✅ *(10 Nov 2026: `docs/report-api/` — README and OpenAPI 3.1, served at `/api/v1/openapi.json`; the guide's *The report API*)* **Docs and checks**: an OpenAPI description for the calling teams; the guide's chapter; end-to-end checks against the running server.
-7. **Load test** at the expected volumes.
+7. ✅ *(10 Nov 2026: `dev/load/api.mjs`; numbers in TESTING.md § 6 — 250 reports a minute with 4 workers, 365 with 8; single requests first; no leak)* **Load test** at the expected volumes.
 
 ---
 

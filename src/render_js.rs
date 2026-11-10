@@ -23,6 +23,8 @@ globalThis.quireDraw = (json) => {
 };
 "#;
 const ENTRY_NAME: &str = "quire-draw.js";
+/// The engine's heap kept between reports; past it, it is cleaned up after a report.
+const HEAP_KEPT: usize = 96 << 20;
 
 fn init() {
     static INIT: Once = Once::new();
@@ -214,6 +216,11 @@ impl Engine {
                 None => return Err(failure(tc)),
             }
         };
+        // a report's state is large and the engine keeps what it allocated: past a size, it gives it back
+        let before = self.isolate.get_heap_statistics().total_heap_size();
+        if before > HEAP_KEPT {
+            self.isolate.low_memory_notification();
+        }
         serde_json::from_str(&out).map_err(|e| format!("Drawing the pages failed: {e}"))
     }
 }

@@ -181,12 +181,30 @@ fn disposition(name: &str, ext: &str) -> String {
     format!("attachment; filename=\"report.{ext}\"; filename*=UTF-8''{enc}")
 }
 
+/// Reports waiting to be made, as (job, item).
+#[derive(Default)]
+struct Queue {
+    single: VecDeque<(String, usize)>,
+    batch: VecDeque<(String, usize)>,
+}
+
+impl Queue {
+    fn push(&mut self, batch: bool, task: (String, usize)) {
+        if batch { self.batch.push_back(task) } else { self.single.push_back(task) }
+    }
+    fn pop(&mut self) -> Option<(String, usize)> {
+        self.single.pop_front().or_else(|| self.batch.pop_front())
+    }
+}
+
 /// The report API: its jobs, their queue and workers.
 pub struct ApiService {
     data: PathBuf,
     ui: PathBuf,
     jobs: Mutex<HashMap<String, Job>>,
-    queue: Mutex<VecDeque<(String, usize)>>,
+    /// Reports to make: one-client requests first (a CRM's click shouldn't wait behind a quarter-end
+    /// batch), then batches', each in the order asked.
+    queue: Mutex<Queue>,
     ready: Condvar,
     /// (account, new reports?) → the minute's start and requests in it.
     rate: Mutex<HashMap<(String, bool), (Instant, u32)>>,
@@ -201,7 +219,7 @@ impl ApiService {
             data: data.to_path_buf(),
             ui: ui.to_path_buf(),
             jobs: Mutex::new(HashMap::new()),
-            queue: Mutex::new(VecDeque::new()),
+            queue: Mutex::new(Queue::default()),
             ready: Condvar::new(),
             rate: Mutex::new(HashMap::new()),
         });
@@ -244,7 +262,7 @@ impl ApiService {
             for (k, it) in j.items.iter_mut().enumerate() {
                 if it.status == "queued" || it.status == "running" {
                     it.status = "queued".into();
-                    queue.push_back((j.id.clone(), k));
+                    queue.push(j.batch, (j.id.clone(), k));
                 }
             }
             jobs.insert(j.id.clone(), j);
@@ -430,7 +448,7 @@ impl ApiService {
         {
             let mut queue = lock(&self.queue);
             for k in 0..n {
-                queue.push_back((job.id.clone(), k));
+                queue.push(job.batch, (job.id.clone(), k));
             }
             lock(&self.jobs).insert(job.id.clone(), job.clone());
         }
@@ -530,7 +548,7 @@ impl ApiService {
             let task = {
                 let mut q = lock(&self.queue);
                 loop {
-                    if let Some(t) = q.pop_front() {
+                    if let Some(t) = q.pop() {
                         break t;
                     }
                     q = self.ready.wait(q).unwrap_or_else(|e| e.into_inner());
@@ -1038,5 +1056,18 @@ mod tests {
         assert_eq!(fields.len(), probe.as_object().unwrap().len());
         assert!(serde_json::from_value::<JobRequest>(probe).is_ok(), "every described field is read");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One-client requests go before the batches already waiting.
+    #[test]
+    fn single_reports_go_first() {
+        let mut q = Queue::default();
+        q.push(true, ("b".into(), 0));
+        q.push(true, ("b".into(), 1));
+        q.push(false, ("s".into(), 0));
+        q.push(true, ("b".into(), 2));
+        q.push(false, ("t".into(), 0));
+        let order: Vec<String> = std::iter::from_fn(|| q.pop()).map(|(j, k)| format!("{j}{k}")).collect();
+        assert_eq!(order, ["s0", "t0", "b0", "b1", "b2"]);
     }
 }
