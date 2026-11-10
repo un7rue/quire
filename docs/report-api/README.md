@@ -2,7 +2,8 @@
 
 For teams whose systems ask Quire for reports: a CRM, a client portal, a scheduler. You send the client and the
 period, Quire makes the report and you download the PDF (or a zip for a batch). The full description, for your
-tools, is [`openapi.json`](openapi.json); a running server also serves it at `GET /api/v1/openapi.json`.
+tools, is [`openapi.json`](openapi.json); a running server also serves it at `GET /api/v1/openapi.json`. The people
+who run Quire set it up as described in the user guide, chapter 17 *Report API* (`ui/help/guide.md`).
 
 - [Before you start](#before-you-start)
 - [Quick start](#quick-start)

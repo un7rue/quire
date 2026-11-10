@@ -2330,4 +2330,5 @@ export default {
   'Quire can write to “{q}”': 'Quire может записывать в «{q}»',
   'Reports already copied there stay where they are.': 'Уже скопированные туда отчёты останутся на месте.',
   "Copies in a destination aren't deleted.": 'Копии в местах доставки не удаляются.',
+  'This server was built without the report renderer: these settings are kept, but requests are refused until it is built with it (cargo build --features render).': 'Этот сервер собран без модуля отрисовки отчётов: настройки сохраняются, но запросы отклоняются, пока он не будет собран с ним (cargo build --features render).',
 }

@@ -28,6 +28,7 @@ async function showKey(key, name) {
 export async function apiAdminPage(el) {
   el.innerHTML = `${areaHead('admin', 'Systems that ask Quire for reports — a CRM, a client portal, a scheduler. Each has its own key and sees only its clients, products and reports. Below: what each report accepts from them.',
     `<button class="btn primary" data-a="add">${icon('plus', 14)} Add API account</button>`, 'API')}
+    <div class="ar-note bad api-norender" hidden>${icon('warn', 14)} This server was built without the report renderer: these settings are kept, but requests are refused until it is built with it (cargo build --features render).</div>
     <div class="ad-split">
       <section class="ar-card">
         <div class="ar-card-t">${icon('link', 15)} API accounts <span class="muted api-n"></span></div>
@@ -42,6 +43,7 @@ export async function apiAdminPage(el) {
   try {
     [api, opts] = await Promise.all([call('auth', { cmd: 'api' }, { quiet: true }), call('auth', { cmd: 'options' }, { quiet: true }).catch(() => null)]);
   } catch (e) { el.querySelector('.api-list').innerHTML = `<div class="ar-note bad">${icon('warn', 14)} ${esc(String(e))}</div>`; return; }
+  el.querySelector('.api-norender').hidden = api.renderer !== false;
   let sel = null; // the account being changed ('' = a new one)
   const listEl = el.querySelector('.api-list'), editEl = el.querySelector('.api-edit');
   const title = (id) => api.reports.find((r) => r.id === id)?.title || id;

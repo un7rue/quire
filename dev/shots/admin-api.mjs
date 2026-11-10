@@ -1,10 +1,11 @@
 // Admin → API: adds an API account (its key shown once), a banker's clients as its access, then lets
 // the UHNWI report take products over the API with a default; prints what it saw.
-//   node dev/shots/admin-api.mjs <out> [en|ru]       (needs the web server and the static server)
+//   node dev/shots/admin-api.mjs <out> [en|ru]       (needs the web server and the static server;
+//                                                     QUIRE_PORT=8779 for a server on another port)
 import { send, ev, shot, sleep, chrome } from './cdp.mjs';
 const lang = process.argv[3] || 'en';
 await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1100, deviceScaleFactor: 1, mobile: false });
-await send('Page.navigate', { url: 'http://localhost:8767/dev/shots/live.html?web' }); await sleep(3000);
+await send('Page.navigate', { url: `http://localhost:8767/dev/shots/live.html?web&port=${process.env.QUIRE_PORT || 8766}` }); await sleep(3000);
 await ev(`(async () => { const m = await import('/ui/state.js'); try { await m.call('auth', { cmd: 'logout' }, { quiet: true }); } catch {} })()`);
 await send('Page.reload', {}); await sleep(3000);
 await ev(`document.querySelector('.lg-demo button[data-l=admin]')?.click()`); await sleep(3000);
@@ -12,6 +13,8 @@ await ev(`(async () => { const i = await import('/ui/i18n.js'); const m = await 
 // from a clean start: no account of an earlier run
 await ev(`(async () => { const m = await import('/ui/state.js'); await m.call('auth', { cmd: 'api_delete_client', args: { id: 'client-portal' } }, { quiet: true }).catch(() => {});
   const a = await m.call('auth', { cmd: 'api' }, { quiet: true }); for (const t of a.targets || []) await m.call('auth', { cmd: 'api_delete_target', args: { id: t.id } }, { quiet: true }).catch(() => {}); })()`);
+// the guide's pictures are in the light appearance
+await ev(`document.documentElement.dataset.theme = 'light'`);
 await ev(`document.querySelector('.adm-item[data-part="api"]')?.click()`); await sleep(2500);
 console.log('page:', await ev(`document.querySelector('.ar-head h2')?.innerText + ' · ' + (document.querySelector('.api-list')?.innerText || '').replace(/\\s+/g, ' ')`));
 await shot(`admin-api-empty-${lang}`);

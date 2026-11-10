@@ -4652,6 +4652,8 @@ fn api_admin_view(app: &App, st: &auth::Store) -> Json {
         "targets": st.api.targets.iter().map(|t| t.public()).collect::<Vec<_>>(),
         "reports": reports,
         "retention_days": st.api.retention_days,
+        // without the renderer this server takes the settings but refuses requests (501)
+        "renderer": cfg!(feature = "render"),
     })
 }
 

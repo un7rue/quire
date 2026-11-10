@@ -34,7 +34,15 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
   (`docs/report-api/openapi.json`) is served at `/api/v1/openapi.json`; a test keeps it in step with the routes.
 - **A load check for the API** (`dev/load/api.mjs`): about 250 reports a minute with 4 workers, 365 with 8, on a
   10-core Mac; memory checked for leaks (none) over 738 reports (TESTING.md § 6).
-- **The user guide** has *The report API* (chapter 1, Admin area): what Admin → API controls, with test steps.
+- **The user guide has a chapter on the API**, *17. Report API*:
+  - running the server with it;
+  - setting up Admin → API: accounts, keys, what each report accepts, destinations with common S3 addresses, finished files;
+  - trying it out with curl;
+  - how requests, jobs, files, errors and callbacks work;
+  - what Activity records, running it day to day with sizing numbers, troubleshooting, and test steps;
+  - five screenshots.
+- **Admin → API warns** when the server was built without the report renderer: its settings are kept, but requests
+  are refused.
 
 - **Admin → API** (on the web server): an account for each system that will ask for reports — a CRM, a client portal,
   a scheduler. Each has its own key, the clients and products it may report on, and the reports it may ask for. The key
