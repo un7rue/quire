@@ -30,19 +30,21 @@ npx @tauri-apps/cli@^2 build --bundles deb,appimage   # packages (.deb, AppImage
 On Linux the desktop app keeps AI keys and database passwords in `secrets.json` in its data folder
 (`~/.local/share/app.quire.reports/`), sealed with `master.key` beside it or `QUIRE_SECRET_KEY`, as the server does;
 *Show in folder* opens the file manager (`xdg-open`); the screen eyedropper is macOS-only and hidden. Every push to
-GitHub builds and checks it on Ubuntu (`.github/workflows/linux.yml`: engine tests, the server and its checks, the
-desktop app, `.deb` and AppImage kept with the run).
+GitHub builds and checks it on Ubuntu (`.github/workflows/linux.yml`: engine tests, the server with the report API and its checks,
+the desktop app, `.deb` and AppImage kept with the run).
 
 **In a browser.** The same app runs as a web server: one core, one UI, two ways in. The desktop app is unchanged.
 
 ```sh
 cargo run --no-default-features --bin quire-server    # then open http://127.0.0.1:8766/
+cargo run --no-default-features --features render --bin quire-server    # …with the report API (V8; first build downloads it)
 ```
 
 Options: `--port 8766`, `--data DIR` (accounts, settings, themes, logs and saved files; default `~/.quire-server`,
 or `QUIRE_DATA`), `--host` (default `127.0.0.1`), `--ui DIR` (or `QUIRE_UI`), `--allow-dir DIR` and `--allow-host HOST`
 (repeatable; below), `--secure` (the session cookie only travels over HTTPS), `--dev` (lets pages from other local ports
-call it). The server builds without Tauri (`--no-default-features`), so it needs no window system.
+call it), `--api-workers N` (reports the API makes at once; 2). The server builds without Tauri (`--no-default-features`),
+so it needs no window system.
 
 Each browser gets a workspace of its own (a cookie): its own sign-in, open documents and undo, kept across page
 reloads and closed after 12 idle hours. In the data folder, the libraries are shared as in the desktop app
@@ -67,9 +69,29 @@ the person's saved reports (*Saved*). Exports, briefs, CSVs and batch reports do
 - **Sign-in.** Five wrong passwords in a row rest the login for 15 minutes.
 - **HTTP.** Plain HTTP: run it behind an HTTPS proxy with `--secure`. Requests over 300 MB, slower than 2 minutes or past
   512 at once are refused; pages can't be framed by other sites.
+- **Report API** (built with `--features render`; plan: [backlog/report-api.md](backlog/report-api.md)). Other systems
+  ask for reports with an API account's key (**Admin → API**: one account per system, its clients × products and
+  reports; what each report accepts and its defaults; how long files are kept). `Authorization: Bearer <key>`;
+  `POST /api/v1/reports` with `client_id` (or `clients` for a batch), `period` (`{start, end}` or `{preset: ytd |
+  last_month | last_quarter | last_year}`), optional `template` (UHNWI) and `params` → `202` and a job;
+  `GET /api/v1/jobs/{id}` (status, pages, layout issues, values used); `GET /api/v1/jobs/{id}/file` (the PDF, or a zip
+  of a batch); `GET /api/v1/jobs/{id}/files/{client_id}`; `GET /api/v1/templates`. A bad request is refused at once
+  (401, 403, 404, 422); `Idempotency-Key` makes a retry return the first job; 60 new requests a minute per account
+  (429). **Delivery:** Admin can have an account's reports copied to a destination — a folder on the server (a mounted
+  file share too) or an S3-compatible bucket (signed by curl, `--aws-sigv4`; its secret sealed) — in folders by
+  account, day and job; a request's `callback_url`, on a host Admin allows for the account, is POSTed the finished job,
+  signed (`X-Quire-Signature: sha256=` HMAC-SHA256 of `<X-Quire-Timestamp>.<body>` with the SHA-256 hex of the API key)
+  and tried again up to four times (`src/api_delivery.rs`). **For the calling teams:**
+  [docs/report-api/README.md](docs/report-api/README.md) (quick start, errors, checking a callback's signature) and
+  [docs/report-api/openapi.json](docs/report-api/openapi.json), also served at `GET /api/v1/openapi.json` (no key). Pages are drawn by the app's own drawing code in V8 (`src/render_js.rs`), with no browser. Jobs live in
+  `api/jobs/` in the data folder and survive a restart; their files are deleted after the retention days. Every request
+  and report is in Activity under `api:<account>` (`src/api_jobs.rs`, checks: `node dev/web/api-checks.mjs`).
 - **Docker.** `docker build -t quire-server .` then
   `docker run -d -p 8766:8766 -v quire-data:/data -e QUIRE_SECRET_KEY='…' quire-server` (Python 3 with pandas and curl
   inside; the demo database at `QUIRE_DEMO_DB`).
+- **Report API load.** `node dev/load/api.mjs`: quarter-end batches and single requests at once. On a 10-core Mac
+  (release build) about 80 reports a minute per worker, 250 with 4 and 365 with 8; single requests go before batches
+  (ready in 1–3 s while batches run); memory 1–3 GB by workers, no leak (TESTING.md § 6).
 - **Load.** `node dev/load/reports.mjs <people> <url>`: that many bankers at once, each signing in and opening a
   client's report. A person's sign-in, report and one period change cost about 3 CPU-seconds, nearly all of it the
   report's SQL over the bank data, so the server serves about as many people at once as it has cores (TESTING.md § 6).

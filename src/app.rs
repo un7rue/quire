@@ -9,7 +9,13 @@ use serde_json::{json, Value as Json};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use crate::host::{Host, H};
-use crate::{ai, ai_admin, ai_design, ai_report, ai_restyle, audit, auth, client_sample, data, dbconn, export, fonts, layout, looks, model, overview, period, proposal, proposals, python, query, sample, theme_studio, uhnwi_sample, uhnwi_theme, vm};
+use crate::{ai, ai_admin, ai_design, api_accounts, api_delivery, ai_report, ai_restyle, audit, auth, client_sample, data, dbconn, export, fonts, layout, looks, model, overview, period, proposal, proposals, python, query, sample, theme_studio, uhnwi_sample, uhnwi_theme, vm};
+
+mod report_api;
+#[cfg(feature = "render")]
+pub(crate) use report_api::{ApiDesk, PeriodAsked, Refusal, Request};
+#[cfg(feature = "render")]
+pub(crate) use report_api::{draw, Drawn};
 
 const UNDO_LIMIT: usize = 100;
 /// Documents open at once (templates, reports and themes).
@@ -2461,6 +2467,26 @@ fn auth_cmd(app: &mut App, cmd: &str, args: &Json) -> Result<Json, String> {
         "save_connections" => app.audit("data", "connections", "", &format!("Saved {} connection(s)", args["connections"].as_array().map(|c| c.len()).unwrap_or(0)), Json::Null, err),
         "publish" => app.audit("admin", "publish", "", "Published the report", args.clone(), err),
         "set_audience" => app.audit("admin", "audience", &arg("id"), "Changed who gets the report", args["audience"].clone(), err),
+        "api_save_client" => {
+            let c = &args["client"];
+            let was = c["was"].as_str().unwrap_or("");
+            let name = c["name"].as_str().unwrap_or("");
+            let detail = if was.is_empty() { format!("Added the API account “{name}” (a key made)") } else { format!("Changed the API account “{name}”") };
+            app.audit("admin", if was.is_empty() { "add API account" } else { "change API account" }, name, &detail, c.clone(), err);
+        }
+        "api_new_key" => app.audit("admin", "API key", &arg("id"), &format!("Made a new key for the API account “{}” (the old one stopped working)", arg("id")), Json::Null, err),
+        "api_delete_client" => app.audit("admin", "delete API account", &arg("id"), &format!("Deleted the API account “{}”", arg("id")), Json::Null, err),
+        "api_save_report" => app.audit("admin", "API report", &arg("id"), &format!("Changed what “{}” accepts over the API", arg("id")), args["settings"].clone(), err),
+        "api_save_target" => {
+            let t = &args["target"];
+            let mut data = t.clone();
+            if let Some(o) = data.as_object_mut() { o.remove("secret_key"); }
+            let name = t["name"].as_str().unwrap_or("");
+            app.audit("admin", if t["was"].as_str().unwrap_or("").is_empty() { "add API destination" } else { "change API destination" }, name, &format!("API destination “{name}”"), data, err);
+        }
+        "api_delete_target" => app.audit("admin", "delete API destination", &arg("id"), &format!("Deleted the API destination “{}”", arg("id")), Json::Null, err),
+        "api_test_target" => app.audit("admin", "test API destination", &arg("id"), &format!("Tested the API destination “{}”", arg("id")), Json::Null, err),
+        "api_retention" => app.audit("admin", "API files", "", &format!("API files kept {} days", args["days"]), Json::Null, err),
         "save_report_source" | "save_source" | "delete_source" => app.audit("data", cmd, args["dataset"]["name"].as_str().unwrap_or(&arg("id")), &cmd.replace('_', " "), Json::Null, err),
         _ => {}
     }
@@ -2539,6 +2565,73 @@ fn auth_cmd_inner(app: &mut App, cmd: &str, args: &Json) -> Result<Json, String>
         "options" => {
             gate(app, &["admin"])?;
             auth::options(&app.store())
+        }
+        // ---- the report API: the systems that ask for reports, and what each report accepts
+        "api" => {
+            gate(app, &["admin"])?;
+            Ok(api_admin_view(app, &app.store()))
+        }
+        "api_save_client" => {
+            gate(app, &["admin"])?;
+            let e: api_accounts::ApiClientEdit = serde_json::from_value(args["client"].clone()).map_err(|e| format!("Bad API account: {e}"))?;
+            let mut st = app.store();
+            let key = api_accounts::save(&mut st, e, &me)?;
+            app.save_store(&st)?;
+            Ok(json!({"key": key, "api": api_admin_view(app, &st)}))
+        }
+        "api_new_key" => {
+            gate(app, &["admin"])?;
+            let mut st = app.store();
+            let key = api_accounts::new_key(&mut st, &arg("id"))?;
+            app.save_store(&st)?;
+            Ok(json!({"key": key, "api": api_admin_view(app, &st)}))
+        }
+        "api_delete_client" => {
+            gate(app, &["admin"])?;
+            let mut st = app.store();
+            api_accounts::remove(&mut st, &arg("id"))?;
+            app.save_store(&st)?;
+            Ok(api_admin_view(app, &st))
+        }
+        "api_save_report" => {
+            gate(app, &["admin"])?;
+            let id = arg("id");
+            let r: api_accounts::ApiReport = serde_json::from_value(args["settings"].clone()).map_err(|e| format!("Bad settings: {e}"))?;
+            let defs = report_doc(app, &id)?.param_defs;
+            let mut st = app.store();
+            api_accounts::set_report(&mut st, &id, r, &defs)?;
+            app.save_store(&st)?;
+            Ok(api_admin_view(app, &st))
+        }
+        "api_save_target" => {
+            gate(app, &["admin"])?;
+            let e: api_accounts::ApiTargetEdit = serde_json::from_value(args["target"].clone()).map_err(|e| format!("Bad destination: {e}"))?;
+            let mut st = app.store();
+            let id = api_accounts::save_target(&mut st, e, &me)?;
+            app.save_store(&st)?;
+            Ok(json!({"id": id, "api": api_admin_view(app, &st)}))
+        }
+        "api_delete_target" => {
+            gate(app, &["admin"])?;
+            let mut st = app.store();
+            api_accounts::remove_target(&mut st, &arg("id"))?;
+            app.save_store(&st)?;
+            Ok(api_admin_view(app, &st))
+        }
+        "api_test_target" => {
+            // writes a small file there (and takes it away from a folder): can Quire reach it?
+            gate(app, &["admin"])?;
+            let st = app.store();
+            let t = st.api.targets.iter().find(|t| t.id == arg("id")).ok_or("No such destination.")?;
+            Ok(json!({"at": api_delivery::test(t)?}))
+        }
+        "api_retention" => {
+            gate(app, &["admin"])?;
+            let days = args["days"].as_u64().filter(|d| (1..=365).contains(d)).ok_or("Keep files 1 to 365 days.")?;
+            let mut st = app.store();
+            st.api.retention_days = days as u32;
+            app.save_store(&st)?;
+            Ok(api_admin_view(app, &st))
         }
         "preview" => {
             gate(app, &["admin"])?;
@@ -4539,6 +4632,31 @@ fn published_pages(app: &App, id: &str) -> Result<Doc, String> {
     Ok(d)
 }
 
+/// Admin → API: the accounts (no key hashes), each published report with the parameters the API
+/// may set and their defaults, and how long files are kept.
+fn api_admin_view(app: &App, st: &auth::Store) -> Json {
+    let products: Vec<Json> = auth::options(st).map(|o| o["sources"].as_array().cloned().unwrap_or_default()).unwrap_or_default().iter().map(|s| s["id"].clone()).collect();
+    let reports: Vec<Json> = st.reports.iter().map(|p| {
+        let rules = st.api.reports.get(&p.id).cloned().unwrap_or_default();
+        let params: Vec<Json> = report_doc(app, &p.id).map(|d| d.param_defs).unwrap_or_default().iter().filter(|d| !auth::is_client_param(d)).map(|d| {
+            let r = rules.params.get(&d.name).cloned().unwrap_or_default();
+            let product = d.source.as_ref().is_some_and(|s| s.field == "src_cd") || d.field == "src_cd";
+            json!({"name": d.name, "label": d.label, "kind": d.kind, "multi": d.multi, "default": d.default,
+                "choices": if product { json!(products) } else { json!(d.options) },
+                "accept": r.accept, "api_default": r.default})
+        }).collect();
+        json!({"id": p.id, "title": p.title, "published": p.published, "off": rules.off, "params": params})
+    }).collect();
+    json!({
+        "clients": st.api.clients.iter().map(|c| c.public()).collect::<Vec<_>>(),
+        "targets": st.api.targets.iter().map(|t| t.public()).collect::<Vec<_>>(),
+        "reports": reports,
+        "retention_days": st.api.retention_days,
+        // without the renderer this server takes the settings but refuses requests (501)
+        "renderer": cfg!(feature = "render"),
+    })
+}
+
 /// A new report from a published template, for someone in its audience.
 fn report_from_published(app: &App, id: &str) -> Result<Doc, String> {
     gate(app, &["user", "design"])?;
@@ -4548,6 +4666,11 @@ fn report_from_published(app: &App, id: &str) -> Result<Doc, String> {
     if !st.may_use(p, s) {
         return Err(format!("“{}” isn't one of your reports.", p.title));
     }
+    report_doc(app, id)
+}
+
+/// A new report from a published template (whoever asks has been let through).
+fn report_doc(app: &App, id: &str) -> Result<Doc, String> {
     let mut d = published_doc(app, id)?;
     to_report(&mut d, None);
     // a custom range is this year so far: 1 January to today
@@ -5148,6 +5271,13 @@ fn batch_make(app: &App, kind: &str, client: &str, start: Option<chrono::NaiveDa
         d.params.start = Some(s);
         d.params.date = e;
     }
+    let mut sub = load_apart(app, d, client)?;
+    let st = sub.resp();
+    Ok((sub, st))
+}
+
+/// `d` (made for `client`) loaded in a workspace of its own, with the person's access applied.
+fn load_apart(app: &App, d: Doc, client: &str) -> Result<App, String> {
     let mut sub = batch_app(app);
     sub.load(d, None);
     sub.enforce_access();
@@ -5156,8 +5286,7 @@ fn batch_make(app: &App, kind: &str, client: &str, start: Option<chrono::NaiveDa
     if now != client {
         return Err(format!("“{client}” isn't one of your clients."));
     }
-    let st = sub.resp();
-    Ok((sub, st))
+    Ok(sub)
 }
 
 /// One client's report for a batch (see `batch_make`); the open documents aren't touched.
@@ -8055,7 +8184,7 @@ mod tests {
         let _ = std::fs::remove_dir(&dir);
     }
 
-    fn app_with(doc: Doc) -> App {
+    pub(super) fn app_with(doc: Doc) -> App {
         let mut a = App {
             doc: None,
             path: None,

@@ -9,6 +9,67 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
 
 ---
 
+## Unreleased — 10 November 2026
+
+### New
+
+- **The report API** (on the web server, built with `--features render`). Other systems — a CRM, a client portal, a
+  scheduler — ask Quire for a client's report, or a batch of them, with their API account's key, and download the
+  PDFs (one report) or a zip (a batch). `POST /api/v1/reports` answers at once with a job, or refuses a request it
+  can't serve with the reason (a client outside the account's access, an unknown client, a parameter the report
+  doesn't take, a bad period); `GET /api/v1/jobs/{id}` shows each report's status, pages, layout issues and the
+  values used. A retried request with the same `Idempotency-Key` gets the first job; 60 new requests a minute per
+  account. Jobs survive a restart; their files are deleted after the days set in Admin → API. Each request and report
+  is in Activity under the account, with a new *API* filter there. One 18-page report takes about a second
+  (`src/api_jobs.rs`; README *On a server*).
+- **Reports delivered where the bank keeps them.** In Admin → API, *Destinations*: a folder on the server (a mounted
+  file share too) or an S3-compatible bucket (AWS, MinIO, Yandex Object Storage…), with a *Test* button. An account set
+  to copy there gets each report copied, in folders by account, day and job; a failed copy leaves the report
+  downloadable and shows in the job and in Activity. S3 secret keys are sealed on the server.
+- **Callbacks.** A request can name a `callback_url`: when the job is done Quire POSTs it there, signed so the
+  caller's team can check it came from Quire using only their API key, and tries again up to four times. Only hosts
+  Admin lists for the account are called (`src/api_delivery.rs`).
+- **A guide for the teams that call it** (`docs/report-api/README.md`): a quick start, every field and error, and how
+  to check a callback's signature in Python and Node (both run against a real callback). The OpenAPI 3.1 description
+  (`docs/report-api/openapi.json`) is served at `/api/v1/openapi.json`; a test keeps it in step with the routes.
+- **A load check for the API** (`dev/load/api.mjs`): about 250 reports a minute with 4 workers, 365 with 8, on a
+  10-core Mac; memory checked for leaks (none) over 738 reports (TESTING.md § 6).
+- **The user guide has a chapter on the API**, *17. Report API*:
+  - running the server with it;
+  - setting up Admin → API: accounts, keys, what each report accepts, destinations with common S3 addresses, finished files;
+  - trying it out with curl;
+  - how requests, jobs, files, errors and callbacks work;
+  - what Activity records, running it day to day with sizing numbers, troubleshooting, and test steps;
+  - five screenshots.
+- **Admin → API warns** when the server was built without the report renderer: its settings are kept, but requests
+  are refused.
+
+- **Admin → API** (on the web server): an account for each system that will ask for reports — a CRM, a client portal,
+  a scheduler. Each has its own key, the clients and products it may report on, and the reports it may ask for. The key
+  is shown once, when made; Quire keeps only a fingerprint of it. *New key…* replaces it at once. Below, for each
+  published report: whether it is offered over the API, which parameters a request may set, and their defaults for API
+  requests; and how many days finished files are kept (7 to start). Every change is in Activity, never a key
+  (`ui/apiadmin.js`, `src/api_accounts.rs`).
+
+- **The core makes a report for another system's request**: a published report (UHNWI when none is named), a client
+  by the bank's id, a period as dates or by name (`ytd`, `last_month`, `last_quarter`, `last_year`) and the report's
+  other parameters — those Admin lets the API set, checked against the report's own; Admin's defaults fill in the rest.
+  The caller's access applies, and a request it can't serve is refused with the reason (`src/app/report_api.rs`; plan in [`backlog/report-api.md`](backlog/report-api.md)).
+- **Report pages drawn without a browser.** The web server can run the app's own drawing code in V8 (Chrome's
+  engine), measuring text with Quire's fonts, and write the pages as a PDF. The pages match the browser's word for
+  word; positions differ by under 2 pt. Built with `--features render` (`src/render_js.rs`).
+
+### Improved
+
+- **A single report doesn't wait behind a batch.** Reports asked for one client at a time (a CRM's click) are made
+  before the batches already waiting: with three quarter-end batches running, one is ready in about a second instead
+  of 20 (`src/api_jobs.rs`).
+- **The page-drawing engine gives memory back** after a large report (past 96 MB of heap) (`src/render_js.rs`).
+- **Client access preview in Russian.** *Coverage* and the "Sees 5 clients" line under a person's access are translated.
+- `ui/util.js` loads outside a browser (no canvas or `navigator` needed at start), so the drawing code runs on the server.
+
+---
+
 ## 0.2.0 — 5 November 2026
 
 ### New

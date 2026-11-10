@@ -3169,3 +3169,22 @@ body.adm-ai-on .ar-body[data-area="admin"] { padding-right: min(480px, 40vw); }
 .cp-open > span { display: flex; flex-direction: column; min-width: 0; }
 .cp-open > span > span { font-size: 11px; color: var(--text-2); }
 .note.part-of { margin: 8px 12px 0; }
+
+/* Admin → API (ui/apiadmin.js) */
+.api-wide { grid-column: 1 / -1; }
+.api-keyrow { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+.api-key { display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.api-key code { flex: 1; font-size: 12.5px; word-break: break-all; user-select: all; }
+.api-lead { font-size: 12.5px; margin: 6px 0 12px; max-width: 900px; }
+.api-rep { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
+.api-rep-h { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-bottom: 6px; }
+.api-rep-f { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.api-pt td input[data-k="default"] { width: 100%; max-width: 320px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-size: 12.5px; }
+.api-pt .hint { margin-top: 3px; }
+.api-keep { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-top: 8px; }
+.api-keep input { width: 70px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
+.api-dform { display: flex; flex-direction: column; gap: 12px; }
+.api-dform .seg { align-self: flex-start; }
+.api-dform select, .ad-grid select { height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-size: 13px; }
+.api-dacts { white-space: nowrap; text-align: right; }
+.api-dacts .btn + .btn { margin-left: 4px; }

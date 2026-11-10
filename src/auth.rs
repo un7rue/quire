@@ -125,6 +125,8 @@ pub struct Store {
     pub ai: crate::ai::AiPolicy,
     /// The web server runs Python data sources and scripts (off until an administrator says so).
     pub python_on_server: bool,
+    /// The report API: the systems that ask for reports, and what each report accepts from them.
+    pub api: crate::api_accounts::ApiSettings,
 }
 
 /// Puts the Data area's changes for a report into its pages (by source id).
@@ -405,6 +407,7 @@ pub fn seed() -> Store {
         report_sources: Default::default(),
         ai: Default::default(),
         python_on_server: false,
+        api: Default::default(),
     }
 }
 

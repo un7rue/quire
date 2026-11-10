@@ -26,7 +26,8 @@ so the guide doubles as a test script. Screenshots use the built-in examples (*M
 14. [Export](#14-export)
 15. [Keyboard shortcuts](#15-keyboard-shortcuts)
 16. [AI assistant](#16-ai-assistant)
-17. [Full test checklist](#17-full-test-checklist)
+17. [Report API: other systems ask for reports](#17-report-api)
+18. [Full test checklist](#18-full-test-checklist)
 
 ---
 
@@ -218,7 +219,7 @@ to the client. It goes after the facts and before the legal text, in a section o
 
 ### The Admin area
 
-Admin has five parts, listed on its left:
+Admin has these parts, listed on its left:
 
 | Part | What is there |
 |---|---|
@@ -227,6 +228,7 @@ Admin has five parts, listed on its left:
 | **Access** | Everyone at a glance, one row per person: roles, clients, products, groups, the reports they get and what AI may send for them (and why). Tiles on top count who can sign in, administrators, who sees every client, who is restricted, who may send figures to AI and who still has the demo password. Click a person to open them in *Users & roles*. |
 | **AI** | The bank's AI policy (on/off, *Structure only* or *Figures*, providers allowed), bank-wide keys, what AI may send person by person, and the use of the last 30 days by person and by task. |
 | **Activity** | Work sessions (who worked on which report, for which client, how long, what they changed, exported and asked AI) and every event — see below. |
+| **API** | *Web version only.* The systems that ask Quire for reports (a CRM, a client portal, a scheduler): their keys, clients and reports, what each report accepts from them, where their reports are copied — see [17. Report API](#17-report-api). |
 
 ![Admin → Access](img/56-admin-access.png)
 
@@ -284,6 +286,9 @@ Cyrillic intact). Passwords and keys are never written to the log. It lives in t
 In **Admin**, *Groups* lists the groups (Private bankers, Insurance desk, Analysts to start with): name, members and
 the reports given to each. A person's page shows their **groups** (tick to join) and their **reports** — through a
 group, to everyone, or given to them (tick to give or take away one directly).
+
+**The report API** (web version): other systems ask Quire for reports with a key, set up in **Admin → API**. It has a
+chapter of its own: [17. Report API](#17-report-api).
 
 The **Data** role looks after every report's data without opening templates: with nothing open, the violet group in
 the Data area has a report picker and lists that published report's own sources and parameters, read-only — preview
@@ -1981,7 +1986,307 @@ requests failed — check the keys*.
 - [ ] Admin → AI: the costs follow a changed price at once.
 ---
 
-## 17. Full test checklist
+## 17. Report API
+
+Other systems can ask Quire for a client's report, or a batch of them, and get the PDFs back without anyone opening
+Quire. For example:
+
+- a **CRM** puts the quarter's report next to the client;
+- a **client portal** offers it for download;
+- a **scheduler** makes every client's report at quarter end.
+
+This chapter is for the people who run Quire: building the server with the API, setting it up in Admin, trying it
+out, and running it day to day. The developers of the calling systems have a guide of their own,
+`docs/report-api/README.md`. The server also describes itself in the OpenAPI format at `/api/v1/openapi.json`, for
+their tools.
+
+**How it works, in short.** Each calling system has an **API account** with a key. A request names the client (by the
+bank's id), the period and, if the account may, some of the report's settings. Quire checks the request at once and
+answers with a **job**. Workers on the server make the reports with the same pages, data and drawing as the app. The
+system downloads the PDF, or a zip for a batch. Optionally, Quire also copies each report to a shared folder or bucket,
+and calls the system back when the job is done.
+
+### 17.1 Running the server with the API
+
+The API is part of the **web server**, built with the report renderer. The desktop app doesn't answer API requests, so
+**Admin → API appears only in the browser version**. If the server was built without the renderer, the page says so
+at the top: settings can be made, but requests are refused until it is rebuilt.
+
+```sh
+cargo run --release --no-default-features --features render --bin quire-server -- --data /srv/quire --api-workers 4
+```
+
+- **`--features render`** builds in the page renderer (V8, Chrome's JavaScript engine). The first build downloads it,
+  which takes a few minutes. A server built without it answers every API request with `501` and says so.
+- **`--api-workers N`** is how many reports are made at once (2 if not given, up to 64). One report takes about 0.75
+  CPU-seconds, so up to the number of cores, more workers make reports faster. See [17.6](#176-running-it-day-to-day)
+  for measured numbers.
+- **`--data`** holds everything, the API's included: the accounts in `users.json` (keys only as fingerprints), the S3
+  secret keys sealed in `secrets.json`, and the jobs and their files in `api/jobs/`.
+- **HTTPS.** Run the server behind an HTTPS proxy, as for people signing in. A key travels in every request.
+- **Docker.** The image is built with the renderer: `docker build -t quire-server .`. Workers go after the image name:
+  `docker run … quire-server --api-workers 4`. A destination folder on the host must be mounted into the container
+  (`-v /mnt/reports:/mnt/reports`).
+
+### 17.2 Setting it up in Admin → API
+
+Sign in to the browser version as an administrator and open **Admin → API**. A good order is: first decide what each
+report accepts (17.2.3), then add the destinations (17.2.4), then the accounts (17.2.1).
+
+![Admin → API](img/59-admin-api.png)
+
+#### 17.2.1 API accounts
+
+Add one account per calling system with **Add API account**:
+
+| Setting | What it does |
+|---|---|
+| **Name**, **What it is** | How the system shows here and in Activity. *What it is* is a note, such as who runs the system. |
+| **Id** | Made from the name (`client-portal`) if left empty. It is part of the key and of the log (`api:client-portal`). Changing it makes a new key. |
+| **Its key works** | Off: the system is refused (`401 … switched off`) until it's switched back on. Nothing else changes. |
+| **Client access** | The same as a person's: every client, or bankers' coverage and clients one by one; every product, or some. The preview says how many clients that comes to. A request for any other client is refused (`403`). With *Selected products*, reports show only those products' accounts. |
+| **Reports** | The published reports it may ask for. None ticked: every published report (except those kept off the API). |
+| **Copy its reports to** | A destination (17.2.4) that each of its reports is also copied to. *Nowhere*: download only. |
+| **Callbacks may go to** | The hosts its callbacks may go to, separated by commas (`crm.bank.local`, `hooks.bank.local:8443`). A host without a port allows any port; with a port, only that one. Empty: the system can't ask for callbacks. |
+
+#### 17.2.2 The key
+
+![The key, shown once](img/60-api-key.png)
+
+**Add and make its key** saves the account and shows its key **once**, with **Copy**. Give it to the system's team as
+you would a password, for example in your password manager. Quire keeps only a fingerprint and can't show the key
+again. The list shows its last four characters, to tell keys apart.
+
+**New key…** makes a new key and the old one **stops working at once**. Do it together with the system's team, when a
+key may have leaked, or when someone who had it leaves. Callbacks are signed with a key worked out from the API key,
+so they change with it. An account made before callbacks existed needs a new key before it can sign them; its page
+says so.
+
+#### 17.2.3 What each report accepts
+
+![What each report accepts, destinations, finished files](img/61-api-reports.png)
+
+Every published report has a box:
+
+- **Offered over the API**: off keeps the report away from every system (`403`), whatever their accounts say.
+- **A request may set it**: a request always gives the client and the period. Tick the report's other parameters a
+  system may choose; for the UHNWI report that is *Products*. A parameter not ticked is refused with `422`, and the
+  message lists what the report takes. **Nothing is ticked at first.**
+- **Default for API requests**: used when a request leaves the parameter out, for example `BROK, BANK` (several
+  values by comma; the choices are listed under the box). Empty: the template's own default (*Template's default*).
+  A default applies even when the parameter isn't ticked, so you can fix a value for every system.
+
+Press **Save** in the report's box.
+
+#### 17.2.4 Destinations
+
+![A destination](img/62-api-destination.png)
+
+**Add destination** makes a place that an account's reports are copied to, besides the download:
+
+- **Folder or file share**: a full path **on the server** (`/mnt/reports`). A network share must be mounted on the
+  server first, and in Docker mounted into the container. Quire needs to be able to write there.
+- **S3 bucket**: any S3-compatible service, addressed path-style (`<address>/<bucket>/<key>`). The address and region
+  for some common services:
+
+| Service | Service address | Region |
+|---|---|---|
+| AWS | `https://s3.eu-central-1.amazonaws.com` | `eu-central-1` |
+| Yandex Object Storage | `https://storage.yandexcloud.net` | `ru-central1` |
+| MinIO | `http://minio.bank.local:9000` | `us-east-1` (MinIO's default) |
+
+  Add the **bucket**, an optional **prefix** (a folder inside the bucket) and the **access key** and **secret key**.
+  The keys need permission to write objects (`s3:PutObject`). The secret is sealed on the server and never shown
+  again; leave it empty when changing the destination to keep it.
+
+Reports go into folders by account, day and request: `<account>/<date>/<job>/`. In a folder they are named
+`<client id> — <client> — <report> — <period>.pdf`; in a bucket, `<client id>.pdf`.
+
+**Test** writes a small file there to show Quire can reach it (in a folder it is taken away again; in a bucket a
+`quire-test-….txt` stays). A destination an account copies to can't be deleted; change the account first.
+
+#### 17.2.5 Finished files
+
+Finished files are kept for download for the days set under **Finished files** (7 to start, 1 to 365), then deleted
+with their job: a system asking later gets `404`. Copies in a destination stay. Old jobs are looked for every hour.
+
+![Delivery](img/63-api-delivery.png)
+
+### 17.3 Trying it out
+
+After setting up an account, check it end to end before giving the key to the system's team. With the account's key
+in `KEY` and the server's address in `Q`:
+
+```sh
+# 1. the reports the account may ask for, and what each takes
+curl -s -H "Authorization: Bearer $KEY" $Q/api/v1/templates
+
+# 2. one report: answers 202 and a job right away
+curl -s -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+     -d '{"client_id": "C0025", "period": {"preset": "last_quarter"}}' $Q/api/v1/reports
+
+# 3. its status: "queued", "running", then "done" (a few seconds)
+curl -s -H "Authorization: Bearer $KEY" $Q/api/v1/jobs/<job_id>
+
+# 4. the PDF
+curl -s -H "Authorization: Bearer $KEY" -o report.pdf $Q/api/v1/jobs/<job_id>/file
+```
+
+Then check what it **mustn't** do:
+
+- a client outside its access: `403`;
+- a parameter you didn't tick, such as `"params": {"product": ["BROK"]}`: `422`;
+- without the key, or with a wrong one: `401`.
+
+Look in **Admin → Activity → API**: the requests and the report are there under `api:<id>`.
+
+For a destination, press **Test**, then ask for a report and look in the folder or bucket. For callbacks, the system's
+team gives a test address on an allowed host. The job's `callback` then says `sent`, or why not.
+
+**Checks the developers run** (TESTING.md § 6):
+
+- `node dev/web/api-checks.mjs`: 28 checks against a server on fresh data. It covers keys, a single report, a batch's
+  zip, refusals, a folder destination, a signed callback and Activity.
+- `node dev/load/api.mjs`: quarter-end batches and single requests at once, for sizing.
+
+### 17.4 How requests work
+
+**A request** is `POST /api/v1/reports` with JSON:
+
+| Field | | |
+|---|---|---|
+| `client_id` | one report | The bank's id of the client, like `C0025`. |
+| `clients` | a batch | Several ids, up to 2000, each made once. Give `client_id` or `clients`, not both. |
+| `period` | required | Two dates, `{"start": "2026-07-01", "end": "2026-09-30"}`, or a named period, `{"preset": …}`: `ytd` (this year so far), `last_month`, `last_quarter` or `last_year`, counted back from the day of the request. |
+| `template` | optional | A published report's id; the UHNWI report if left out. |
+| `params` | optional | Only the parameters ticked for the report (17.2.3): a text or number, or a list for one that takes several. |
+| `callback_url` | optional | Called when the job is done, on a host allowed for the account. |
+
+Any other field is refused, so a typo doesn't go unnoticed.
+
+**Checked first.** Quire checks everything it can before starting: the account, the report, every client and the
+access to it, the period and the parameters. A request it can't serve whole is refused with the reason, and a batch
+with one client it can't report on starts nothing; `error.clients` lists each refused client.
+
+**The job.** An accepted request answers `202` with the job, and `GET /api/v1/jobs/<id>` shows it as it goes:
+
+- `status`: `queued`, `running`, then `done`, `partial` (some reports failed) or `failed`;
+- for each client: `status`, `pages`, `layout_issues`, and **`values`**, what the report was made with, defaults
+  included. Keep `values` with the file;
+- `copy`: the copy to the destination, `done` with where, or `failed` with why;
+- `callback`: `pending`, `sent` or `failed`, with the attempts;
+- `expires`: when its files are deleted.
+
+**Single requests go first.** Reports asked for one client at a time, such as a click in a CRM, are made before the
+batches already waiting. With three quarter-end batches running, one is ready in about a second.
+
+**Files.**
+
+- `GET …/file` gives the PDF, or a zip of a batch's PDFs once the batch is finished. Before then it answers `409`.
+- `GET …/files/<client_id>` gives one client's PDF of a batch.
+- A copy that fails leaves the report downloadable.
+
+**Retries.** A system that sends the same request again with the same `Idempotency-Key` header gets the first job
+back instead of new reports.
+
+**Errors** are JSON, `{"error": {"status": …, "message": "…"}}`, and the message says what to change:
+
+| Status | When |
+|---|---|
+| `400` | The body isn't JSON. |
+| `401` | No key, a wrong one, or the account is switched off. |
+| `403` | A client or product outside the account's access, a report it may not ask for, or one kept off the API. |
+| `404` | No such report, client or job (another account's job counts as missing, and so does one past its days). |
+| `409` | The file isn't ready yet. |
+| `422` | The request doesn't fit: a bad period, a parameter not ticked, a value the report doesn't accept, or a callback host not allowed. |
+| `429` | Over the limits below: wait the seconds in `Retry-After`. |
+| `500` | Quire couldn't make the report; the message says why. |
+
+**Callbacks.** When a job with a `callback_url` finishes, Quire POSTs it there, the same JSON as
+`GET /api/v1/jobs/<id>`. A call that doesn't get a `2xx` within 30 s is tried again after 10 s, 1 minute and 5
+minutes. Each call is signed: `X-Quire-Signature` is HMAC-SHA256 of `<X-Quire-Timestamp>.<body>`, keyed with the
+SHA-256 of the API key. The developers' guide shows how to check it in Python and Node.
+
+**Limits** per account: 60 new requests a minute, and 1200 other requests (status, downloads). Past either, `429` with
+`Retry-After`. Up to 2000 clients in one request.
+
+### 17.5 What is recorded
+
+Everything is in **Admin → Activity**, under the account as `api:<id>`. The **API** filter shows the API's own events:
+
+| Event | Area | Written when |
+|---|---|---|
+| *report request* | API | A request accepted (its clients, period and parameters) or refused (why). |
+| *api export* | Files | A report made, with the client, its pages and layout issues; or failed, with the error. (It doesn't show as a banker's latest report in their client list: that lists their own.) |
+| *api copy* | API | A copy to a destination that failed. |
+| *api callback* | API | A callback delivered, or failed after its attempts. |
+| *add / change / delete API account*, *API key*, *API report*, *API destination*, *API files* | Admin | Every change made in Admin → API, with what it was set to. |
+
+Keys and S3 secrets are never written to the log.
+
+### 17.6 Running it day to day
+
+- **Keys.** Make a new key when one may have leaked or someone who had it leaves. To stop a system for a while, switch
+  *Its key works* off; to stop it for good, delete the account. Its requests stay in Activity.
+- **Restarts.** Jobs are kept on disk: a restarted server finishes the reports that were waiting, and sends callbacks
+  that were due.
+- **Disk.** A report's PDF is about 1 MB, kept for the retention days. A quarter-end run for 1000 clients needs about
+  1 GB until its files expire.
+- **Sizing.** Measured on a 10-core Mac (release build), with three batches and single requests at once:
+
+| `--api-workers` | Reports a minute | 1000 clients in about |
+|---|---|---|
+| 1 | 83 | 12 min |
+| 2 | 150 | 7 min |
+| 4 | 253 | 4 min |
+| 8 | 366 | 3 min |
+
+  Memory as the system shows it was 1 GB with one worker up to 3 GB with eight. Most of it is freed memory kept for
+  the next reports; the memory actually in use stays at about 130 MB, and none leaks. Measure on your own server with
+  `node dev/load/api.mjs` before choosing the workers; Linux may differ.
+- **Reports with layout issues** (`layout_issues` above 0) were made, but some content was cut off or ran past the
+  page. Open the same report in Quire, for that client and period, to see why: usually a client with more accounts or
+  holdings than the template was laid out for.
+
+### 17.7 Troubleshooting
+
+| What you see | Why, and what to do |
+|---|---|
+| No **API** in Admin | It's the desktop app. Open the browser version of the server. |
+| A warning on top of Admin → API, or `501 … built without the report renderer` | The server was built without `--features render`: its settings can be made, but requests are refused. Build it with the renderer. |
+| `401 Invalid API key` | The key was copied wrong, or a new key was made since. Make a new key and give it to the team. |
+| `401 … switched off` | *Its key works* is off for the account. |
+| `403 … outside your access` | The client or product isn't in the account's *Client access*. |
+| `403 … isn't one of your reports` / `… isn't offered over the API` | The account's *Reports*, or *Offered over the API* for the report. |
+| `422 … can't be set over the API` | The parameter isn't ticked under *What each report accepts*. |
+| `422 Callbacks may go to … only` / `… aren't allowed` | Add the host to the account's *Callbacks may go to*. |
+| `409 Not ready` | The job is still running: ask again when `status` is `done`. |
+| `404` for a job | It belongs to another account, or its files were deleted after the retention days. |
+| A copy `failed` | Press **Test** on the destination. For a folder: does it exist on the server, can Quire write there, and is it mounted into Docker? For S3: the address, bucket, region and keys, and the keys' permission to write. |
+| A callback `failed` | Can the server reach the address? It must answer `2xx` within 30 s. The job's `callback.error` says what happened. |
+| Reports come slowly | More `--api-workers`, up to the server's cores. Single requests already go before batches. |
+
+**Test**
+
+- [ ] The desktop app has no Admin → API; the browser version has it. A server built without `--features render`
+  shows a warning on top of it.
+- [ ] *What each report accepts* → UHNWI → tick *Products*, default `BROK` → **Save**.
+- [ ] **Add API account** → *Client portal*, *Selected clients* → one banker → **Add and make its key**: the key is
+  shown once with *Copy*; after *Done* only its last four characters show.
+- [ ] With the key (17.3): templates list UHNWI with *product*; a report for one of the banker's clients is `202`, then
+  `done` with 18 pages and `values.params.product` = `["BROK"]`; the PDF downloads.
+- [ ] A client of another banker: `403`. `"params": {"colour": "red"}`: `422`. No key: `401`.
+- [ ] A batch of three of the banker's clients: one job; `…/file` is `409` while it runs, then a zip of three PDFs.
+- [ ] **Add destination** → a folder → **Test**: *Quire can write to …*. The account's *Copy its reports to* → it →
+  a new report is also in `<folder>/client-portal/<date>/<job>/`.
+- [ ] *Callbacks may go to* empty → a request with `callback_url`: `422`.
+- [ ] *Its key works* off → `401 … switched off`. **New key…** → the old key `401`, the new one works.
+- [ ] Activity → **API**: the requests, reports and copies under `api:client-portal`; *Admin*: each change made here.
+- [ ] *Finished files* → 1 day; a job's `expires` is a day after it finished.
+
+---
+
+## 18. Full test checklist
 
 A quick pass through every area; details are in each chapter's **Test** list.
 
@@ -2008,3 +2313,4 @@ A quick pass through every area; details are in each chapter's **Test** list.
 | 19 | AI design | A page built from a description and undone in one step; the page in front changed | ☐ |
 | 20 | AI look | Template restyled after a pasted picture; text readable; undone in one step | ☐ |
 | 21 | AI report | Brief & pitch, check and a page note on a report; identities masked; refused at Structure only | ☐ |
+| 22 | Report API | *(web)* An API account's key shown once; a report asked for with it downloads as a PDF; another banker's client refused; a copy lands in the destination | ☐ |

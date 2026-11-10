@@ -339,7 +339,7 @@ const TASKS = {
 // ---------------------------------------------------------------- Activity
 
 // "document" events are files: new, open, save, export, close (edits are their own area)
-const AREAS_LOG = [['auth', 'Sign-in', 'logout'], ['admin', 'Admin', 'shield'], ['session', 'Sessions', 'clock'], ['document', 'Files', 'page'], ['edit', 'Edits', 'brush'], ['data', 'Data', 'database'], ['ai', 'AI', 'sparkles']];
+const AREAS_LOG = [['auth', 'Sign-in', 'logout'], ['admin', 'Admin', 'shield'], ['session', 'Sessions', 'clock'], ['document', 'Files', 'page'], ['edit', 'Edits', 'brush'], ['data', 'Data', 'database'], ['ai', 'AI', 'sparkles'], ['api', 'API', 'link']];
 // an action for people: "update_widget" → "Widget changed"
 const EDITS = { set_params: 'Parameters changed', update_widget: 'Widget changed', set_rect: 'Widget moved or resized', add_widget: 'Widget added', add_from_catalog: 'Widget added from the library',
   remove_widget: 'Widget deleted', replace_widget: 'Widget replaced', duplicate_widget: 'Widget duplicated', move_to_page: 'Moved to another page', add_page: 'Page added', remove_page: 'Page deleted',

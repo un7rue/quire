@@ -1,5 +1,6 @@
-# Builds and checks Quire on Linux (Ubuntu): the engine tests, the web server and its checks,
-# the desktop app, and its .deb and AppImage packages (kept as the run's artifacts).
+# Builds and checks Quire on Linux (Ubuntu): the engine tests, the web server (with the report
+# API's renderer, V8) and its checks, the desktop app, and its .deb and AppImage packages (kept as
+# the run's artifacts).
 name: Linux
 
 on:
@@ -27,17 +28,18 @@ jobs:
         with:
           cache-on-failure: true
 
+      # with the renderer: V8 comes prebuilt (downloaded by the v8 crate), so the report API's tests run too
       - name: Build the engine tests
-        run: cargo test --no-default-features --lib --no-run
+        run: cargo test --no-default-features --features render --lib --no-run
 
       # a stuck test fails here with its name, instead of using up the job
       - name: Engine tests
         timeout-minutes: 10
-        run: cargo test --no-default-features --lib
+        run: cargo test --no-default-features --features render --lib
 
       - name: Web server
         run: |
-          cargo build --no-default-features --bin quire-server
+          cargo build --no-default-features --features render --bin quire-server
           ./target/debug/quire-server --version
 
       - name: Web server checks
@@ -48,6 +50,15 @@ jobs:
           ./target/debug/quire-server --port 8770 --allow-host db.bank.local --data "$data" > server.log 2>&1 &
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8770/ > /dev/null && break; sleep 1; done
           node dev/web/checks.mjs http://127.0.0.1:8770 "$data" || { cat server.log; exit 1; }
+
+      - name: Report API checks
+        env:
+          QUIRE_SECRET_KEY: a test passphrase for the checks
+        run: |
+          data=$(mktemp -d)
+          ./target/debug/quire-server --port 8771 --data "$data" > api.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8771/ > /dev/null && break; sleep 1; done
+          node dev/web/api-checks.mjs http://127.0.0.1:8771 || { cat api.log; exit 1; }
 
       # the desktop app in release, packaged (Tauri's CLI from npm: prebuilt, no compiling)
       - name: Desktop app and packages (.deb, AppImage)

@@ -1,6 +1,6 @@
 # Report API for other systems
 
-> **Status:** idea — discussed 23 Oct 2026, not started
+> **Status:** agreed 10 Nov 2026 — see *Decisions*; done 10 Nov 2026 — all seven steps (the core call, the V8 renderer, Admin → API, the endpoints and jobs, delivery, docs, load test); open: Docker build, a real S3 bucket, memory on Linux
 > **Goal:** other systems (CRM, client portal, a scheduler…) ask Quire for a client's report over an API — **client id, period, template, products** (what a user picks in the app) — and get a PDF or PowerPoint back.
 
 ---
@@ -93,21 +93,29 @@ Shares the server part with [web-server-mode.md](web-server-mode.md) (stage 1: a
 
 ## Plan
 
-1. **Core as a library call**: "make report (template, client id, period, products, language) → report state", reusing `batch_make`; parameters validated against the template's parameter definitions.
-2. **Renderer**: headless Chrome pool running `ui/render.js` → SVG pages / slides → `export::pdf` / `export::pptx`.
-3. **HTTP service** (axum): the endpoints above; API-client accounts and access; logging; rate limits; idempotency.
-4. **Jobs**: async queue, status, file store (local folder or S3-compatible), callbacks; batch requests.
-5. **Admin**: API clients (create, keys, access, revoke) and their activity.
-6. **Docs**: an OpenAPI description for the calling teams.
-7. **Load test** at the expected volumes.
+1. ✅ *(10 Nov 2026: `src/app/report_api.rs` — `make`, `draw`)* **Core as a library call**: "make report (template, client id, period, products, language) → report state", reusing `batch_make`; parameters validated against the template's parameter definitions.
+2. ✅ *(10 Nov 2026: `src/render_js.rs`, cargo feature `render`; V8 152 + ICU 78; checked against Chrome by `dev/shots/api-render.mjs`)* **Renderer**: embedded JS engine running `ui/render.js` (text measured by `src/text.rs`) → SVG pages → `export::pdf`.
+3. ✅ *(10 Nov 2026: `src/api_accounts.rs`, `ui/apiadmin.js`; checked by `dev/shots/admin-api.mjs`)* **Admin → API**: API accounts (key shown once, kept as a hash, new key, switch off, delete; clients × products access; the reports each may ask for), what each report accepts (offered or not, parameters a request may set, their defaults), file retention; every change in Activity.
+4. ✅ *(10 Nov 2026: `src/api_jobs.rs`, routes in `src/bin/quire-server.rs`; checked by `dev/web/api-checks.mjs`, also in CI)* **Endpoints and jobs** in `quire-server` (built with `--features render`): `POST /api/v1/reports` (one client or a batch) → `202 { job_id }`; `GET /api/v1/jobs/{id}` (status, values used, page count, layout issues); `GET /api/v1/jobs/{id}/file` (the PDF, or a zip for a batch); `GET /api/v1/templates` (what each report accepts); a job queue with worker threads (one V8 engine each); files kept for the retention days, then deleted; each request in Activity; idempotency key; rate limits. Dockerfile and CI build with the renderer.
+5. ✅ *(10 Nov 2026: `src/api_delivery.rs`; Admin → API *Destinations*; checked by `dev/web/api-checks.mjs`)* **Delivery** — copies are set per account by Admin, not by the request; callbacks only to hosts Admin allows per account, signed with HMAC-SHA256 keyed by SHA-256 of the API key: `callback_url` POSTed when a job finishes (signed with the caller's key); copies to a folder / file share or an S3-compatible bucket, set in Admin → API.
+6. ✅ *(10 Nov 2026: `docs/report-api/` — README and OpenAPI 3.1, served at `/api/v1/openapi.json`; the guide's *The report API*)* **Docs and checks**: an OpenAPI description for the calling teams; the guide's chapter; end-to-end checks against the running server.
+7. ✅ *(10 Nov 2026: `dev/load/api.mjs`; numbers in TESTING.md § 6 — 250 reports a minute with 4 workers, 365 with 8; single requests first; no leak)* **Load test** at the expected volumes.
 
 ---
 
-## Open questions
+## Decisions (10 Nov 2026)
 
-1. **Who calls it** — CRM, client portal, a scheduler? (decides sync vs async)
-2. **Volumes** — a few a day per banker, or thousands at quarter end?
-3. **Delivery** — return the file, put it in a shared store (S3 / file share), or both?
-4. **Authentication** — API keys, or the bank's OAuth / mTLS?
-5. **Saving** — keep each generated report in Quire too (a banker can open and adjust it), or only return the file?
-6. **Defaults** — when a parameter is left out (period, products), use the template's defaults?
+| Topic | Decision |
+|---|---|
+| Callers | Single reports (CRM, portal) and large batch runs (scheduler). Every request is a **job**: `202 { job_id }`, then status / file. Batch = many clients in one request. |
+| Host | Inside `quire-server`, under `/api/v1/…`; shares its connections, templates, access and Activity. Not exposed by the desktop app. |
+| Rendering | **Embedded JS engine** in the server running `ui/render.js` & co.; `textWidth` backed by the core's font code (`src/text.rs`) instead of a browser canvas. No Chrome. |
+| Request | `client_id` and `period` required; `template` optional (defaults to UHNWI). |
+| API parameters | **Admin configures** which extra parameters the API accepts per template (e.g. products, language) and their **default values**; left-out parameters take those defaults. Job status lists the values used. |
+| Client id | The bank's client id; Quire maps it to the template's client. |
+| Auth | **API keys**: an API account per calling system in Admin, with its own clients × products access; keys can be revoked. |
+| Delivery | Download from Quire **and**, optionally, a copy to a shared store — a **folder/file share or an S3-compatible bucket** (Admin configures either; S3 keys sealed). |
+| Notify | Polling `GET /jobs/{id}` always; optional `callback_url` POSTed when done, signed with the caller's key. |
+| Retention | Files kept **7 days** (Admin can change), then deleted; shared-store copies untouched. |
+| Formats | **PDF**; a **zip** of a batch's files. (No PowerPoint for now.) |
+| Saving | Only the file — no document kept in Quire; Activity logs every request. |

@@ -5,15 +5,18 @@
 #
 # Put it behind an HTTPS proxy and add `--secure` (the session cookie then only travels over HTTPS).
 # Data sources read files from /data (uploads) and from folders given with `--allow-dir` (mount them);
-# `--allow-host db.bank.local` limits the database servers it connects to.
+# `--allow-host db.bank.local` limits the database servers it connects to. The report API is at
+# /api/v1/ (Admin → API makes the keys); `--api-workers N` reports are made at once (2).
 
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
+COPY docs ./docs
 COPY resources ./resources
 COPY ui/fonts ./ui/fonts
-RUN cargo build --release --no-default-features --bin quire-server
+# --features render: the report API draws pages in V8 (prebuilt, downloaded by the v8 crate)
+RUN cargo build --release --no-default-features --features render --bin quire-server
 
 FROM debian:bookworm-slim
 # curl: the AI providers and ClickHouse are reached through it; python3 + pandas: Python data sources

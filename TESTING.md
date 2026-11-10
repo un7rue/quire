@@ -14,7 +14,10 @@ The checks run before a change is called done, and how to run them yourself. Cha
 | Any change to a chart's series settings | A part per series: layout and each setting drawn | `node dev/shots/series-parts.mjs <out>` (needs the web server) | 30 s |
 | Any change to selection or the inspector's tabs | Several widgets selected: shared settings, changes, moves and deletes reach all | `node dev/shots/multi-select.mjs <out>` (needs the web server) | 30 s |
 | A change to a screen (client list, dialogs, admin, AI panes) | The screen driven in a headless browser and screenshotted | `dev/shots/*.mjs` | 10–60 s |
-| **Every push to GitHub** | On Linux (Ubuntu 24.04): engine tests, the web server and its checks, the desktop app, `.deb` and AppImage | GitHub Actions, `.github/workflows/linux.yml`; `gh run watch` | ~20 min |
+| Any change to Admin → API (`ui/apiadmin.js`, the access editor in `ui/areas.js`) | An account added, its key shown once and nowhere after, a report's parameters and default saved, Activity without the key | `node dev/shots/admin-api.mjs <out> [en\|ru]` (needs the web server) | 30 s |
+| Any change to the report API (`src/app/report_api.rs`, `src/api_accounts.rs`, `src/render_js.rs`) or to the drawing code it runs (`ui/render.js`, `ui/charts.js`, `ui/table.js`, `ui/util.js`…) | The API's tests with V8 built in, then its pages against the same report drawn in Chrome | `cargo test --lib --no-default-features --features render -- report_api render_js api_accounts api_jobs api_delivery`, then `node dev/shots/api-render.mjs` | ~1 min (first build: V8 downloads) |
+| Any change to the report API's server side (`src/api_jobs.rs`, `src/bin/quire-server.rs`) | End to end against a running server: an account's key, one report, a batch's zip, refusals, Activity | `node dev/web/api-checks.mjs` ([below](#6-web-server-checks)) | 10 s |
+| **Every push to GitHub** | On Linux (Ubuntu 24.04): engine tests (with the renderer), the web server and its checks, the report API's checks, the desktop app, `.deb` and AppImage | GitHub Actions, `.github/workflows/linux.yml`; `gh run watch` | ~20 min |
 | Before a release that changes what users do | The **Test** steps in the user guide, by a person | [ui/help/guide.md](ui/help/guide.md), each chapter's *Test* list | — |
 
 A change is done when `cargo test` passes in full. Failures are fixed, not skipped. If a check wasn't run, the release
@@ -38,6 +41,7 @@ About 150 tests in `src/` (`#[test]`); they need `data/demo.duckdb` (the demo ba
 | **Batch and client list** | batch reports leave the open document alone, the overview's figures and coming events, incremental activity index (`batch_reports_leave_the_open_document_alone`, `overview_reads_figures_and_whats_coming`) |
 | **AI** (no provider called) | identities masked and restored, data levels by bank / group / person, plans checked before applying, answers retried with the error, request formats per provider (`identities_go_out_masked_and_come_back`, `ai_level_by_person_group_or_bank`, `design_assistant_builds_a_page_in_one_undo_step`) |
 | **Export** | PDF pages with embedded text, a valid PowerPoint package, Word and PowerPoint text extraction (`pdf_has_pages_and_embedded_text`, `pptx_is_a_valid_package`) |
+| **Report API** | a request's client by the bank's id, named periods, parameters checked against the report's own and set only when Admin lets the API set them, Admin's defaults, refusals with their status (404 / 403 / 422), the open document untouched; API accounts: keys shown once and kept as a hash, a new key replacing the old, a switched-off account refused, an account acting with its own clients and reports, Admin's commands for administrators only and no key in the store or the log (`keys_sign_api_accounts_in`, `report_settings_are_checked`, `api_accounts_act_with_their_own_access`, `admin_manages_api_accounts`); with `--features render`: every page drawn by the UI's code in V8 and written as a PDF, ICU's number formats, text measured by the core (`makes_the_report_asked_for`, `refuses_what_it_cant_make`, `named_periods_count_back_from_today`, `draws_the_report_without_a_browser`, `measures_text_and_formats_numbers`) |
 | **Activity log** | events written and read back, work sessions (`events_are_written_and_read_back_filtered_with_ai_requests`) |
 
 **Without the client's typeface.** The repository doesn't have `ui/fonts/private/` (`.gitignore`), so before a
@@ -143,6 +147,56 @@ a 10-core Mac (29 Oct 2026), dev build: one person's sign-in + report + period c
 person opens a report in 0.6 s, 10 at once in 2.6 s, 50 in 11 s, 100 in 24 s, with no failures and no data errors —
 the server is busy with the work, not waiting on locks. The release build measures the same (0.56 s alone, 3.1 s for
 10, 13 s for 50, 25 s for 100): the time is DuckDB running the report's SQL, already optimised in the dev build.
+
+**Report API end to end** (a server built with the renderer, on fresh data):
+
+```sh
+QUIRE_SECRET_KEY='a test passphrase here' cargo run --no-default-features --features render --bin quire-server -- \
+    --port 8771 --data /tmp/quire-api-check      # a new, empty folder
+node dev/web/api-checks.mjs http://127.0.0.1:8771
+```
+
+The description is served without a key; an administrator makes an API account; with its key: no key or a wrong one refused (401); the reports it may ask
+for; one report (202, a job, done with its pages and values, the PDF); the same `Idempotency-Key` getting the same job;
+a batch of 3 (409 while running, then a zip, and each PDF on its own); another banker's client refusing the whole batch
+(403, the client named); an unknown client (404), a parameter or period that doesn't fit (422); a folder destination
+tested; a callback to a host not allowed refused (422); a batch copied to the destination and called back once, the
+signature checked with the key alone as the caller's team would (Node's crypto); Activity with the
+requests and reports under the account, never the key; a switched-off account's key refused. On 10 Nov 2026 (dev
+build, 2 workers): one report 1.0 s, a batch of 3 in 1.8 s. The unit tests (`api_jobs`, with `--features render`):
+the description (`docs/report-api/openapi.json`) naming exactly the routes served and the request's fields,
+jobs kept across a restart and finished, files deleted past the retention days, the rate limit, copies and a signed
+callback, a callback not taken tried again then failed; `api_delivery`: HMAC against RFC 4231, folder copies, an S3
+upload as a signed PUT (to a stand-in server), signed callbacks; `api_accounts`: callback hosts, destinations.
+
+**Report API load:** `node dev/load/api.mjs [--url …] [--batches 3] [--singles 20] [--pid <server pid>]` — quarter-end
+batches (every client the bank has, 41 in the demo database) and single requests arriving a second apart, from one API
+account; it prints reports a minute, how long single requests wait, failures and the server's memory. Measured on a
+10-core Mac (10 Nov 2026, release build, 3 batches + 20 singles = 143 reports, 2834 pages, none failed):
+
+| `--api-workers` | Reports a minute | A single request, while the batches run (median · slowest) | Memory at most (`ps`) |
+|---|---|---|---|
+| 1 | 83 | 1.6 s · 1.6 s | 1.0 GB |
+| 2 | 150 | — | 1.1 GB |
+| 4 | 253 | 1.1 s · 2.1 s (19.6 s · 27.2 s before single requests went first) | 1.6–2.0 GB |
+| 8 | 366 | 1.6 s · 2.6 s | 3.0 GB |
+
+So 1000 clients take about 4 minutes with 4 workers, under 3 with 8. A report costs about 0.75 CPU-second (data,
+drawing, PDF); the workers scale until the cores run out. **Memory isn't leaking:** over six rounds (738 reports) on
+one server `ps` creeps from 1.5 to 2.1 GB, but `leaks` finds none and the live allocations stay at about 130 MB
+(128 → 132 → 131 MB, round after round; physical footprint ~740 MB). The rest is freed memory the allocator keeps for
+the next reports. Each worker's V8 heap stays under 100 MB (it is cleaned up past 96 MB). Not yet measured on Linux.
+
+**The description and the calling teams' guide.** After a change to the API, lint the description
+(`npx @redocly/cli@1.25.0 lint docs/report-api/openapi.json`: valid; two warnings — the callback and the description
+itself have no error answers — are expected) and keep `docs/report-api/README.md`'s examples to what the server sends.
+
+**Report API pages against the browser:** `draws_the_report_without_a_browser` writes the report it drew to
+`$TMPDIR/quire_api_report` (`.json` its state, `.svg` its pages, `.pdf`); `node dev/shots/api-render.mjs` draws the same
+state in headless Chrome as the app does and compares every text item. On 10 Nov 2026 (UHNWI, 18 pages): all 1,750
+items had the same words (no line wrapped or cut elsewhere); 1,210 in the same place, the rest within 1.85 pt (column
+widths, from kerning the core doesn't measure). One report draws in ~50 ms once the engine is up (~0.27 s for the
+first on a thread).
 
 Unit tests for the server parts: `secrets_are_sealed_and_come_back`, `connection_passwords_come_off_and_back`,
 `hidden_passwords_are_put_back`, `wrong_passwords_rest_the_login`.

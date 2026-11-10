@@ -12,7 +12,7 @@ export function h(html) {
   return t.content.firstElementChild;
 }
 
-export const isMac = navigator.platform.toLowerCase().includes('mac') || navigator.userAgent.includes('Mac');
+export const isMac = typeof navigator !== 'undefined' && (navigator.platform.toLowerCase().includes('mac') || navigator.userAgent.includes('Mac'));
 export const mod = (e) => (isMac ? e.metaKey : e.ctrlKey);
 
 export function debounce(fn, ms) {
@@ -29,16 +29,24 @@ export const clone = (v) => JSON.parse(JSON.stringify(v));
 
 // ---------------------------------------------------------------- text measurement (Inter, same files as Rust)
 
-const ctx = document.createElement('canvas').getContext('2d');
+// without a browser (the server drawing pages for the report API) the core measures text
+const measure = globalThis.quireMeasure;
+let ctx = null;
 
 /** CSS / SVG font-family list for a report font, falling back to Inter. */
 export const fontStack = (family) => (!family || family === 'Inter' ? 'Inter' : `'${String(family).replace(/['"\\]/g, '')}', Inter`);
 
 /** Width in points; `tracking` is letter spacing in em. */
 export function textWidth(s, size, weight = 400, family = 'Inter', italic = false, tracking = 0) {
-  ctx.font = `${italic ? 'italic ' : ''}${weight} ${size}px ${fontStack(family)}`;
   s = String(s);
-  return ctx.measureText(s).width + (tracking ? tracking * size * [...s].length : 0);
+  let w;
+  if (measure) w = measure(s, +size, +weight || 400, String(family || 'Inter'), !!italic);
+  else {
+    ctx ??= document.createElement('canvas').getContext('2d');
+    ctx.font = `${italic ? 'italic ' : ''}${weight} ${size}px ${fontStack(family)}`;
+    w = ctx.measureText(s).width;
+  }
+  return w + (tracking ? tracking * size * [...s].length : 0);
 }
 
 export function ellipsize(s, max, size, weight = 400, family = 'Inter', italic = false, tracking = 0) {
