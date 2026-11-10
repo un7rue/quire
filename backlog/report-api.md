@@ -1,6 +1,6 @@
 # Report API for other systems
 
-> **Status:** agreed 10 Nov 2026 — see *Decisions*; steps 1–2 done 10 Nov 2026 (the core call, the V8 renderer); next: step 3
+> **Status:** agreed 10 Nov 2026 — see *Decisions*; steps 1–3 done 10 Nov 2026 (the core call, the V8 renderer, Admin → API); next: step 4
 > **Goal:** other systems (CRM, client portal, a scheduler…) ask Quire for a client's report over an API — **client id, period, template, products** (what a user picks in the app) — and get a PDF or PowerPoint back.
 
 ---
@@ -95,10 +95,10 @@ Shares the server part with [web-server-mode.md](web-server-mode.md) (stage 1: a
 
 1. ✅ *(10 Nov 2026: `src/app/report_api.rs` — `make`, `draw`)* **Core as a library call**: "make report (template, client id, period, products, language) → report state", reusing `batch_make`; parameters validated against the template's parameter definitions.
 2. ✅ *(10 Nov 2026: `src/render_js.rs`, cargo feature `render`; V8 152 + ICU 78; checked against Chrome by `dev/shots/api-render.mjs`)* **Renderer**: embedded JS engine running `ui/render.js` (text measured by `src/text.rs`) → SVG pages → `export::pdf`.
-3. **HTTP service** (axum): the endpoints above; API-client accounts and access; logging; rate limits; idempotency.
-4. **Jobs**: async queue, status, file store (local folder or S3-compatible), callbacks; batch requests.
-5. **Admin**: API clients (create, keys, access, revoke) and their activity.
-6. **Docs**: an OpenAPI description for the calling teams.
+3. ✅ *(10 Nov 2026: `src/api_accounts.rs`, `ui/apiadmin.js`; checked by `dev/shots/admin-api.mjs`)* **Admin → API**: API accounts (key shown once, kept as a hash, new key, switch off, delete; clients × products access; the reports each may ask for), what each report accepts (offered or not, parameters a request may set, their defaults), file retention; every change in Activity.
+4. **Endpoints and jobs** in `quire-server` (built with `--features render`): `POST /api/v1/reports` (one client or a batch) → `202 { job_id }`; `GET /api/v1/jobs/{id}` (status, values used, page count, layout issues); `GET /api/v1/jobs/{id}/file` (the PDF, or a zip for a batch); `GET /api/v1/templates` (what each report accepts); a job queue with worker threads (one V8 engine each); files kept for the retention days, then deleted; each request in Activity; idempotency key; rate limits. Dockerfile and CI build with the renderer.
+5. **Delivery**: `callback_url` POSTed when a job finishes (signed with the caller's key); copies to a folder / file share or an S3-compatible bucket, set in Admin → API.
+6. **Docs and checks**: an OpenAPI description for the calling teams; the guide's chapter; end-to-end checks against the running server.
 7. **Load test** at the expected volumes.
 
 ---

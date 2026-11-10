@@ -8,6 +8,7 @@ mod ai_design;
 mod ai_restyle;
 mod ai_report;
 mod ai_admin;
+mod api_accounts;
 mod audit;
 mod auth;
 mod client_sample;

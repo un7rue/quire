@@ -27,6 +27,7 @@ an AI request) needs AI requests in the log: put a few lines in `$QUIRE_BRIDGE_D
 | `admin.mjs <out> [en\|ru]` | Admin's parts: Users & roles, Access, AI, Activity (a session, then *All events* with an AI request open) (56–58) |
 | `sessions.mjs <out> [en\|ru]` | Admin → Activity → Sessions: makes a banker's session through the server (a report, an edit, time, another client), then shows it — it writes to the app's activity log |
 | `clients.mjs <out> [en\|ru]` | The banker's client list: figures, *Needs attention*, a client's details, ⌘] |
+| `admin-api.mjs <out> [en\|ru]` | Admin → API: adds an API account (its key shown once, then nowhere in the page or Activity), one banker's clients as its access; lets the UHNWI report take products with a default (prints ✓-style lines; screenshots `admin-api-*`). Uses `live.html?web` |
 | `api-render.mjs [<files>]` | The report API's pages (V8 in the server) against the same report drawn in Chrome: text items whose words differ, and how far the rest moved. Needs no server: run `cargo test --lib --no-default-features --features render -- report_api::tests::draws` first (it writes `$TMPDIR/quire_api_report.*`) |
 | `pages.mjs <out> "<client>" <pages>` | Report pages as the app draws them, for a client (e.g. `19,20`) |
 | `theme-pages.mjs <out> <file.qtheme> <pages>` | The UHNWI template in a saved theme, pages as PNG (`SVG=1` writes the SVG instead) — for checking a restyled theme |

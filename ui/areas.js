@@ -7,9 +7,10 @@
 // - Admin: accounts, passwords, roles and client access.
 
 import { setAreaAI } from './ai.js';
-import { KEYS_AT } from './platform.js';
+import { KEYS_AT, WEB } from './platform.js';
 import { appLanguage } from './i18n.js';
 import { accessPage, aiAdminPage, activityPage, proposalsAdminPage } from './admin.js';
+import { apiAdminPage } from './apiadmin.js';
 import { toggleAreaFold } from './rail.js';
 import { batchDialog } from './batch.js';
 import { proposalBodyHtml, statusPill, statusMenu, statusName } from './proposal.js';
@@ -949,6 +950,8 @@ const ADMIN_PARTS = [
   ['ai', 'sparkles', 'AI', 'What AI may send, providers, keys'],
   ['activity', 'clock', 'Activity', 'What people did: sign-ins, documents, edits, data, AI'],
   ['proposals', 'briefcase', 'Proposals', 'Every proposal bankers made: content, versions, status, the AI behind it'],
+  // the web server answers the report API; the desktop app doesn't
+  ...(WEB ? [['api', 'link', 'API', 'Systems that ask for reports: their keys, access and what each report accepts']] : []),
 ];
 
 async function adminArea(el) {
@@ -967,7 +970,70 @@ async function adminArea(el) {
   if (part === 'ai') return aiAdminPage(body);
   if (part === 'activity') return activityPage(body);
   if (part === 'proposals') return proposalsAdminPage(body);
+  if (part === 'api') return apiAdminPage(body);
   return usersPage(body);
+}
+
+/**
+ * The client access editor (Users & roles, Admin → API): every client, or bankers' coverage and
+ * clients one by one; every product or some; with who that comes to. Changes `u.access` in place
+ * (`u` is a person or an API account; `u._prodOpen` keeps "Selected products" open while none is ticked).
+ */
+export function accessEditor(accEl, u, opts) {
+  const drawAccess = () => {
+    if (u.roles?.admin) { accEl.innerHTML = `<div class="ar-note">${icon('shield', 14)} Administrators see every client.</div>`; return; }
+    const a = u.access;
+    const prodAll = !a.sources.length && !u._prodOpen;
+    accEl.innerHTML = `<div class="ad-part"><div class="ad-pt">Clients <span class="muted">— who they report on</span></div>
+      <div class="seg ad-scope"><button data-v="all" class="${a.all ? 'on' : ''}">Every client</button><button data-v="some" class="${a.all ? '' : 'on'}">Selected clients</button></div>
+      ${a.all ? '' : `<div class="ad-cols">
+        <div class="ad-col"><div class="ad-ct">Coverage <span class="muted">— the clients of these bankers</span></div>
+          <div class="ad-checks">${[...(opts?.bankers || [])].sort((x, y) => a.coverage.includes(y.id) - a.coverage.includes(x.id)).map((b) => `<label><input type="checkbox" data-k="coverage" value="${esc(b.id)}"${a.coverage.includes(b.id) ? ' checked' : ''}><span>${esc(b.name)}</span><i>${b.clients}</i></label>`).join('')}</div></div>
+        <div class="ad-col"><div class="ad-ct">Clients <span class="muted">— one by one</span></div>
+          <input class="ad-cfind" placeholder="Find a client">
+          <div class="ad-checks tall">${[...(opts?.clients || [])].sort((x, y) => a.clients.includes(y.id) - a.clients.includes(x.id)).map((c) => `<label data-q="${esc(`${c.name} ${c.id} ${c.banker}`.toLowerCase())}"><input type="checkbox" data-k="clients" value="${esc(c.id)}"${a.clients.includes(c.id) ? ' checked' : ''}><span>${esc(c.name)}</span><i>${esc(c.id)}</i></label>`).join('')}</div></div>
+      </div>`}</div>
+      <div class="ad-part"><div class="ad-pt">Products <span class="muted">— which accounts their reports show</span></div>
+        <div class="seg ad-scope ad-prod"><button data-v="all" class="${prodAll ? 'on' : ''}">Every product</button><button data-v="some" class="${prodAll ? '' : 'on'}">Selected products</button></div>
+        ${prodAll ? '' : `<div class="ad-prods">${(opts?.sources || []).map((x) => `<label class="ad-prodc${a.sources.includes(x.id) ? ' on' : ''}"><input type="checkbox" data-k="sources" value="${esc(x.id)}"${a.sources.includes(x.id) ? ' checked' : ''}><span class="ad-rbox">${icon('check', 13, 2.4)}</span><span class="ad-rtx"><b>${esc(srcName(x.id))} <code>${esc(x.id)}</code></b><span>${srcDesc(x.id) ? `${esc(srcDesc(x.id))} · ` : ''}${x.clients} clients</span></span></label>`).join('')}</div>
+        <div class="hint">Only clients with such an account are listed, and their reports show only these accounts — pages of other products are left out.</div>`}
+      </div>
+      <div class="ad-prev"></div>
+      ${opts?.db ? `<div class="ad-src">${icon('database', 12)} Read from ${esc(opts.db.split('/').pop())}: <code>clients.sales_id</code>, <code>accounts.src_cd</code></div>` : ''}`;
+    accEl.querySelectorAll('.ad-prod button').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.v === 'all') { u.access.sources = []; u._prodOpen = false; } else u._prodOpen = true;
+      drawAccess();
+    }));
+    accEl.querySelectorAll('.ad-scope:not(.ad-prod) button').forEach((b) => b.addEventListener('click', () => { u.access.all = b.dataset.v === 'all'; drawAccess(); }));
+    accEl.querySelectorAll('input[data-k]').forEach((x) => x.addEventListener('change', () => {
+      const k = x.dataset.k;
+      u.access[k] = x.checked ? [...new Set([...u.access[k], x.value])] : u.access[k].filter((v) => v !== x.value);
+      x.closest('.ad-prodc')?.classList.toggle('on', x.checked);
+      preview();
+    }));
+    accEl.querySelector('.ad-cfind')?.addEventListener('input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      accEl.querySelectorAll('.ad-checks.tall label').forEach((l) => { l.hidden = !!q && !l.dataset.q.includes(q); });
+    });
+    preview();
+  };
+  const preview = async () => {
+    const pv = accEl.querySelector('.ad-prev');
+    if (!pv) return;
+    // the latest preview wins (the editor is drawn again as roles change)
+    const seq = accEl._seq = (accEl._seq || 0) + 1;
+    try {
+      const r = await call('auth', { cmd: 'preview', args: { access: u.access } }, { quiet: true });
+      if (seq !== accEl._seq) return;
+      if (r.all) { pv.innerHTML = `${icon('users', 14)} <span>Sees <b>every client</b>.</span>`; pv.className = 'ad-prev'; return; }
+      const n = r.clients.length;
+      pv.className = `ad-prev${n ? '' : ' none'}`;
+      pv.innerHTML = n
+        ? `${icon('users', 14)} <span>Sees <b>${n} client${n === 1 ? '' : 's'}</b>: ${r.clients.slice(0, 10).map((c) => esc(c.name)).join(', ')}${n > 10 ? ' …' : ''}</span>`
+        : `${icon('lock', 14)} <span>Sees <b>no clients</b> — tick a banker, a source system or a client.</span>`;
+    } catch (e) { pv.innerHTML = `${icon('warn', 14)} ${esc(String(e))}`; }
+  };
+  drawAccess();
 }
 
 // what a person's client access is, in a few words
@@ -1081,59 +1147,7 @@ async function usersPage(el) {
     }
     // access: every client, or bankers' coverage + source systems + named clients
     const accEl = editEl.querySelector('.ad-access');
-    let previewSeq = 0;
-    const drawAccess = () => {
-      if (u.roles.admin) { accEl.innerHTML = `<div class="ar-note">${icon('shield', 14)} Administrators see every client.</div>`; return; }
-      const a = u.access;
-      const prodAll = !a.sources.length && !u._prodOpen;
-      accEl.innerHTML = `<div class="ad-part"><div class="ad-pt">Clients <span class="muted">— who they report on</span></div>
-        <div class="seg ad-scope"><button data-v="all" class="${a.all ? 'on' : ''}">Every client</button><button data-v="some" class="${a.all ? '' : 'on'}">Selected clients</button></div>
-        ${a.all ? '' : `<div class="ad-cols">
-          <div class="ad-col"><div class="ad-ct">Coverage <span class="muted">— the clients of these bankers</span></div>
-            <div class="ad-checks">${[...(opts?.bankers || [])].sort((x, y) => a.coverage.includes(y.id) - a.coverage.includes(x.id)).map((b) => `<label><input type="checkbox" data-k="coverage" value="${esc(b.id)}"${a.coverage.includes(b.id) ? ' checked' : ''}><span>${esc(b.name)}</span><i>${b.clients}</i></label>`).join('')}</div></div>
-          <div class="ad-col"><div class="ad-ct">Clients <span class="muted">— one by one</span></div>
-            <input class="ad-cfind" placeholder="Find a client">
-            <div class="ad-checks tall">${[...(opts?.clients || [])].sort((x, y) => a.clients.includes(y.id) - a.clients.includes(x.id)).map((c) => `<label data-q="${esc(`${c.name} ${c.id} ${c.banker}`.toLowerCase())}"><input type="checkbox" data-k="clients" value="${esc(c.id)}"${a.clients.includes(c.id) ? ' checked' : ''}><span>${esc(c.name)}</span><i>${esc(c.id)}</i></label>`).join('')}</div></div>
-        </div>`}</div>
-        <div class="ad-part"><div class="ad-pt">Products <span class="muted">— which accounts their reports show</span></div>
-          <div class="seg ad-scope ad-prod"><button data-v="all" class="${prodAll ? 'on' : ''}">Every product</button><button data-v="some" class="${prodAll ? '' : 'on'}">Selected products</button></div>
-          ${prodAll ? '' : `<div class="ad-prods">${(opts?.sources || []).map((x) => `<label class="ad-prodc${a.sources.includes(x.id) ? ' on' : ''}"><input type="checkbox" data-k="sources" value="${esc(x.id)}"${a.sources.includes(x.id) ? ' checked' : ''}><span class="ad-rbox">${icon('check', 13, 2.4)}</span><span class="ad-rtx"><b>${esc(srcName(x.id))} <code>${esc(x.id)}</code></b><span>${srcDesc(x.id) ? `${esc(srcDesc(x.id))} · ` : ''}${x.clients} clients</span></span></label>`).join('')}</div>
-          <div class="hint">Only clients with such an account are listed, and their reports show only these accounts — pages of other products are left out.</div>`}
-        </div>
-        <div class="ad-prev"></div>
-        ${opts?.db ? `<div class="ad-src">${icon('database', 12)} Read from ${esc(opts.db.split('/').pop())}: <code>clients.sales_id</code>, <code>accounts.src_cd</code></div>` : ''}`;
-      accEl.querySelectorAll('.ad-prod button').forEach((b) => b.addEventListener('click', () => {
-        if (b.dataset.v === 'all') { u.access.sources = []; u._prodOpen = false; } else u._prodOpen = true;
-        drawAccess();
-      }));
-      accEl.querySelectorAll('.ad-scope:not(.ad-prod) button').forEach((b) => b.addEventListener('click', () => { u.access.all = b.dataset.v === 'all'; drawAccess(); }));
-      accEl.querySelectorAll('input[data-k]').forEach((x) => x.addEventListener('change', () => {
-        const k = x.dataset.k;
-        u.access[k] = x.checked ? [...new Set([...u.access[k], x.value])] : u.access[k].filter((v) => v !== x.value);
-        x.closest('.ad-prodc')?.classList.toggle('on', x.checked);
-        preview();
-      }));
-      accEl.querySelector('.ad-cfind')?.addEventListener('input', (e) => {
-        const q = e.target.value.trim().toLowerCase();
-        accEl.querySelectorAll('.ad-checks.tall label').forEach((l) => { l.hidden = !!q && !l.dataset.q.includes(q); });
-      });
-      preview();
-    };
-    const preview = async () => {
-      const pv = accEl.querySelector('.ad-prev');
-      if (!pv) return;
-      const seq = ++previewSeq;
-      try {
-        const r = await call('auth', { cmd: 'preview', args: { access: u.access } }, { quiet: true });
-        if (seq !== previewSeq) return;
-        if (r.all) { pv.innerHTML = `${icon('users', 14)} <span>Sees <b>every client</b>.</span>`; pv.className = 'ad-prev'; return; }
-        const n = r.clients.length;
-        pv.className = `ad-prev${n ? '' : ' none'}`;
-        pv.innerHTML = n
-          ? `${icon('users', 14)} <span>Sees <b>${n} client${n === 1 ? '' : 's'}</b>: ${r.clients.slice(0, 10).map((c) => esc(c.name)).join(', ')}${n > 10 ? ' …' : ''}</span>`
-          : `${icon('lock', 14)} <span>Sees <b>no clients</b> — tick a banker, a source system or a client.</span>`;
-      } catch (e) { pv.innerHTML = `${icon('warn', 14)} ${esc(String(e))}`; }
-    };
+    const drawAccess = () => accessEditor(accEl, u, opts);
     syncRoles();
     // AI: what applies now and why (their setting, a group's, or the bank's)
     const aiNow = async () => {

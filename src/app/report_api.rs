@@ -126,8 +126,17 @@ pub(super) fn make(app: &App, req: &Request, today: NaiveDate) -> Result<Made, R
     let id = id.strip_prefix("pub:").unwrap_or(id);
     let st = app.store();
     let p = st.reports.iter().find(|r| r.id == id).ok_or_else(|| not_found(format!("No published report “{id}”.")))?;
-    if !st.may_use(p, session) {
+    // an API account asks for the reports Admin gave it; a person for the ones published to them
+    let may = match session.login.strip_prefix("api:") {
+        Some(account) => p.published && st.api.clients.iter().any(|c| c.id == account && c.may_use(id)),
+        None => st.may_use(p, session),
+    };
+    if !may {
         return Err(forbidden(format!("“{}” isn't one of your reports.", p.title)));
+    }
+    let rules = st.api.reports.get(id).cloned().unwrap_or_default();
+    if rules.off {
+        return Err(forbidden(format!("“{}” isn't offered over the API.", p.title)));
     }
     // the client, by the bank's id
     let client_id = req.client_id.trim();
@@ -144,40 +153,53 @@ pub(super) fn make(app: &App, req: &Request, today: NaiveDate) -> Result<Made, R
     }
     let (start, end) = dates(&req.period, today)?;
 
-    let mut d = for_client(report_from_published(app, id).map_err(forbidden)?, Some(&client));
+    let mut d = for_client(report_doc(app, id).map_err(|e| Refusal { status: 500, message: e })?, Some(&client));
     d.params.grain = "custom".into();
     d.params.start = Some(start);
     d.params.date = end;
-    // the other parameters, checked against the report's own
+    // the other parameters: those Admin lets the API set, checked against the report's own
+    let settable = |p: &ParamDef| rules.params.get(&p.name).is_some_and(|r| r.accept) && !auth::is_client_param(p);
     let mut asked: Vec<(ParamDef, Vec<String>)> = Vec::new();
     for (name, v) in &req.params {
-        let takes = || d.param_defs.iter().filter(|p| !auth::is_client_param(p) && p.user != "hide" && p.user != "show").map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
+        let takes = || {
+            let names: Vec<String> = d.param_defs.iter().filter(|p| settable(p)).map(|p| p.name.clone()).collect();
+            if names.is_empty() { "none (Admin → API sets which)".to_string() } else { names.join(", ") }
+        };
         let def = d.param_defs.iter().find(|p| &p.name == name).cloned()
-            .ok_or_else(|| invalid(format!("“{}” has no parameter “{name}”; it takes: {}.", p.title, takes())))?;
+            .ok_or_else(|| invalid(format!("“{}” has no parameter “{name}”; over the API it takes: {}.", p.title, takes())))?;
         if auth::is_client_param(&def) {
             return Err(invalid(format!("“{name}” is the client: give it as client_id.")));
         }
-        if def.user == "hide" || def.user == "show" {
-            return Err(invalid(format!("“{name}” is fixed in this report.")));
+        if !settable(&def) {
+            return Err(invalid(format!("“{name}” can't be set over the API; it takes: {}.", takes())));
         }
         let vals = value_of(&def, v)?;
         d.params.values.insert(name.clone(), vals.join("\u{1f}"));
         asked.push((def, vals));
     }
+    // Admin's defaults for API requests, for what the request leaves out
+    let mut defaults: Vec<(ParamDef, Vec<String>)> = Vec::new();
+    for (name, r) in rules.params.iter().filter(|(n, r)| !r.default.is_null() && !req.params.contains_key(*n)) {
+        let Some(def) = d.param_defs.iter().find(|p| &p.name == name).cloned() else { continue };
+        let vals = value_of(&def, &r.default).map_err(|e| Refusal { status: 500, message: format!("The API's default for {}", e.message) })?;
+        d.params.values.insert(name.clone(), vals.join("\u{1f}"));
+        defaults.push((def, vals));
+    }
     let mut sub = load_apart(app, d, &client).map_err(forbidden)?;
 
     // values read from the data: one of its choices, and within the caller's products
     let products: Vec<String> = session.products().split(',').filter(|s| !s.is_empty()).map(String::from).collect();
-    if asked.iter().any(|(def, _)| def.source.is_some()) {
+    if asked.iter().chain(&defaults).any(|(def, _)| def.source.is_some()) {
         let base = sub.base_dir();
         let choices = {
             let App { doc, engine, py, .. } = &mut sub;
             doc.as_ref().map(|doc| engine.param_options(doc, base.as_deref(), py)).unwrap_or(Json::Null)
         };
-        for (def, vals) in asked.iter().filter(|(def, _)| def.source.is_some()) {
+        for (k, (def, vals)) in asked.iter().chain(&defaults).enumerate().filter(|(_, (def, _))| def.source.is_some()) {
             let product = def.source.as_ref().is_some_and(|s| s.field == "src_cd") || def.field == "src_cd";
             for v in vals.iter().filter(|v| v.as_str() != "All") {
-                if product && !products.is_empty() && !products.contains(v) {
+                // (a default outside the caller's products shows nothing of them: access filters the data)
+                if k < asked.len() && product && !products.is_empty() && !products.contains(v) {
                     return Err(forbidden(format!("Product “{v}” is outside your access.")));
                 }
                 let known = choices[&def.name].as_array().map(|a| a.iter().any(|c| c == v.as_str()));
@@ -240,12 +262,35 @@ mod tests {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
     }
 
+    /// The accounts store in a folder of its own, with `change` made to it; the API takes the
+    /// products for the UHNWI report.
+    fn store_with(change: impl FnOnce(&mut auth::Store)) -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!("quire_api_{}_{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut st = auth::seed();
+        let mut r = crate::api_accounts::ApiReport::default();
+        r.params.insert("product".into(), crate::api_accounts::ApiParam { accept: true, default: Json::Null });
+        st.api.reports.insert("uhnwi".into(), r);
+        change(&mut st);
+        let path = dir.join("users.json");
+        auth::save(&path, &st).unwrap();
+        path
+    }
+
     /// A banker signed in, with a report open (it stays as it is).
     fn banker() -> App {
+        banker_with(|_| {})
+    }
+
+    fn banker_with(change: impl FnOnce(&mut auth::Store)) -> App {
         let mut doc = uhnwi_fixed();
         to_report(&mut doc, None);
         let mut app = app_with(doc);
-        app.start_session(auth::sign_in(&auth::seed(), "user", auth::DEMO_PASSWORD).unwrap()).unwrap();
+        app.store_path = Some(store_with(change));
+        app.start_session(auth::sign_in(&app.store(), "user", auth::DEMO_PASSWORD).unwrap()).unwrap();
         app
     }
 
@@ -320,6 +365,12 @@ mod tests {
         assert_eq!(q(json!({"client_id": id, "period": per, "params": {"client": "X"}})).status, 422);
         assert_eq!(q(json!({"client_id": id, "period": per, "params": {"product": ["NOPE"]}})).status, 422);
         assert_eq!(q(json!({"client_id": "", "period": per})).status, 422);
+        // a parameter the API isn't let set, and a report kept off the API
+        let app2 = banker_with(|st| { st.api.reports.clear(); });
+        let r = make(&app2, &ask(json!({"client_id": id, "period": per, "params": {"product": ["BROK"]}})), d("2026-11-10")).map(|_| ()).unwrap_err();
+        assert!(r.status == 422 && r.message.contains("can't be set over the API"), "{r:?}");
+        let app3 = banker_with(|st| { st.api.reports.get_mut("uhnwi").unwrap().off = true; });
+        assert_eq!(make(&app3, &ask(json!({"client_id": id, "period": per})), d("2026-11-10")).map(|_| ()).unwrap_err().status, 403);
         // nobody signed in
         let anon = app_with(sample::blank());
         assert_eq!(make(&anon, &ask(json!({"client_id": id, "period": per})), d("2026-11-10")).map(|_| ()).unwrap_err().status, 403);
@@ -357,5 +408,81 @@ mod tests {
         std::fs::write(dump.with_extension("pdf"), &out.pdf).unwrap();
         std::fs::write(dump.with_extension("svg"), svgs.join("\n")).unwrap();
         std::fs::write(dump.with_extension("json"), serde_json::to_string(&m.state).unwrap()).unwrap();
+    }
+
+    /// A system signs in with its API key and acts with its account's access: its own clients and
+    /// reports only; Admin's defaults fill in what a request leaves out.
+    #[test]
+    fn api_accounts_act_with_their_own_access() {
+        if dbconn::demo_path().is_none() { return }
+        let mut key = String::new();
+        let mut app = banker_with(|st| {
+            let e = crate::api_accounts::ApiClientEdit { name: "CRM".into(), active: true, access: auth::Access { all: false, coverage: vec!["S0001".into()], ..Default::default() }, ..Default::default() };
+            key = crate::api_accounts::save(st, e, "admin").unwrap().unwrap();
+            st.api.reports.get_mut("uhnwi").unwrap().params.get_mut("product").unwrap().default = json!(["BROK", "BANK"]);
+        });
+        let (_, session) = crate::api_accounts::sign_in(&app.store(), &key).unwrap();
+        app.end_session();
+        app.start_session(session).unwrap();
+        let (id, _) = own_client(&app);
+        let per = json!({"preset": "last_quarter"});
+        let m = make(&app, &ask(json!({"client_id": id, "period": per})), d("2026-11-10")).unwrap();
+        assert_eq!(m.used["params"]["product"], json!(["BROK", "BANK"]), "Admin's default");
+        let m = make(&app, &ask(json!({"client_id": id, "period": per, "params": {"product": "BANK"}})), d("2026-11-10")).unwrap();
+        assert_eq!(m.used["params"]["product"], json!(["BANK"]), "the request's own");
+        // another banker's client
+        let other = auth::options(&app.store()).unwrap()["clients"].as_array().unwrap().iter()
+            .map(|c| c["id"].as_str().unwrap().to_string()).find(|c| !client_ok(app.clients.as_ref().unwrap(), c)).unwrap();
+        assert_eq!(make(&app, &ask(json!({"client_id": other, "period": per})), d("2026-11-10")).map(|_| ()).unwrap_err().status, 403);
+        // only the reports Admin gave it
+        let mut st = app.store();
+        st.api.clients[0].reports = vec!["other".into()];
+        auth::save(app.store_path.as_ref().unwrap(), &st).unwrap();
+        assert_eq!(make(&app, &ask(json!({"client_id": id, "period": per})), d("2026-11-10")).map(|_| ()).unwrap_err().status, 403);
+    }
+
+    /// Admin → API: only an administrator manages it; a new account's key is shown once and is
+    /// nowhere in the store or the activity log; a report's settings and the retention are checked.
+    #[test]
+    fn admin_manages_api_accounts() {
+        let mut app = app_with(sample::blank());
+        app.store_path = Some(store_with(|_| {}));
+        let banker = auth::sign_in(&app.store(), "user", auth::DEMO_PASSWORD).unwrap();
+        app.start_session(banker).unwrap();
+        assert!(auth_cmd(&mut app, "api", &json!({})).is_err(), "not for a banker");
+        app.end_session();
+        app.start_session(auth::sign_in(&app.store(), "admin", auth::DEMO_PASSWORD).unwrap()).unwrap();
+        let r = auth_cmd(&mut app, "api_save_client", &json!({"client": {"name": "Client portal", "active": true, "access": {"all": true}}})).unwrap();
+        let key = r["key"].as_str().unwrap().to_string();
+        let secret = key.rsplit('.').next().unwrap();
+        assert_eq!(r["api"]["clients"][0]["id"], "client-portal");
+        assert!(r["api"]["clients"][0].get("key_hash").is_none());
+        let uhnwi = r["api"]["reports"].as_array().unwrap().iter().find(|x| x["id"] == "uhnwi").unwrap().clone();
+        let product = uhnwi["params"].as_array().unwrap().iter().find(|p| p["name"] == "product").unwrap();
+        assert_eq!(product["accept"], true);
+        assert!(product["choices"].as_array().is_some_and(|c| c.iter().any(|x| x == "BROK")) || dbconn::demo_path().is_none());
+        // a change keeps the key; a new key replaces it
+        let r = auth_cmd(&mut app, "api_save_client", &json!({"client": {"was": "client-portal", "name": "Client portal", "active": true, "reports": ["uhnwi"]}})).unwrap();
+        assert!(r["key"].is_null());
+        let key2 = auth_cmd(&mut app, "api_new_key", &json!({"id": "client-portal"})).unwrap()["key"].as_str().unwrap().to_string();
+        assert!(api_accounts::sign_in(&app.store(), &key).is_err() && api_accounts::sign_in(&app.store(), &key2).is_ok());
+        // a report's settings
+        let v = auth_cmd(&mut app, "api_save_report", &json!({"id": "uhnwi", "settings": {"params": {"product": {"accept": true, "default": "BROK"}}}})).unwrap();
+        let product = v["reports"].as_array().unwrap().iter().find(|x| x["id"] == "uhnwi").unwrap()["params"].as_array().unwrap().iter().find(|p| p["name"] == "product").unwrap().clone();
+        assert_eq!(product["api_default"], json!(["BROK"]));
+        assert!(auth_cmd(&mut app, "api_save_report", &json!({"id": "uhnwi", "settings": {"params": {"nope": {"accept": true}}}})).is_err());
+        assert!(auth_cmd(&mut app, "api_retention", &json!({"days": 0})).is_err());
+        assert_eq!(auth_cmd(&mut app, "api_retention", &json!({"days": 30})).unwrap()["retention_days"], 30);
+        // the secret is nowhere on disk
+        let dir = app.audit_dir().unwrap();
+        for e in std::fs::read_dir(&dir).unwrap().flatten() {
+            if e.path().is_file() {
+                let t = std::fs::read_to_string(e.path()).unwrap_or_default();
+                assert!(!t.contains(secret) && !t.contains(key2.rsplit('.').next().unwrap()), "a key in {}", e.path().display());
+            }
+        }
+        auth_cmd(&mut app, "api_delete_client", &json!({"id": "client-portal"})).unwrap();
+        assert!(api_accounts::sign_in(&app.store(), &key2).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

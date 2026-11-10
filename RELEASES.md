@@ -11,18 +11,26 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
 
 ## Unreleased — 10 November 2026
 
-### New (not usable yet: the report API's first two steps)
+### New (not usable yet: the report API's first three steps)
+
+- **Admin → API** (on the web server): an account for each system that will ask for reports — a CRM, a client portal,
+  a scheduler. Each has its own key, the clients and products it may report on, and the reports it may ask for. The key
+  is shown once, when made; Quire keeps only a fingerprint of it. *New key…* replaces it at once. Below, for each
+  published report: whether it is offered over the API, which parameters a request may set, and their defaults for API
+  requests; and how many days finished files are kept (7 to start). Every change is in Activity, never a key
+  (`ui/apiadmin.js`, `src/api_accounts.rs`).
 
 - **The core makes a report for another system's request**: a published report (UHNWI when none is named), a client
   by the bank's id, a period as dates or by name (`ytd`, `last_month`, `last_quarter`, `last_year`) and the report's
-  other parameters, checked against the report's own. The caller's access applies, and a request it can't serve is
-  refused with the reason (`src/app/report_api.rs`; plan in [`backlog/report-api.md`](backlog/report-api.md)).
+  other parameters — those Admin lets the API set, checked against the report's own; Admin's defaults fill in the rest.
+  The caller's access applies, and a request it can't serve is refused with the reason (`src/app/report_api.rs`; plan in [`backlog/report-api.md`](backlog/report-api.md)).
 - **Report pages drawn without a browser.** The web server can run the app's own drawing code in V8 (Chrome's
   engine), measuring text with Quire's fonts, and write the pages as a PDF. The pages match the browser's word for
   word; positions differ by under 2 pt. Built with `--features render` (`src/render_js.rs`).
 
 ### Improved
 
+- **Client access preview in Russian.** *Coverage* and the "Sees 5 clients" line under a person's access are translated.
 - `ui/util.js` loads outside a browser (no canvas or `navigator` needed at start), so the drawing code runs on the server.
 
 ---
