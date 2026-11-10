@@ -14,6 +14,7 @@ The checks run before a change is called done, and how to run them yourself. Cha
 | Any change to a chart's series settings | A part per series: layout and each setting drawn | `node dev/shots/series-parts.mjs <out>` (needs the web server) | 30 s |
 | Any change to selection or the inspector's tabs | Several widgets selected: shared settings, changes, moves and deletes reach all | `node dev/shots/multi-select.mjs <out>` (needs the web server) | 30 s |
 | A change to a screen (client list, dialogs, admin, AI panes) | The screen driven in a headless browser and screenshotted | `dev/shots/*.mjs` | 10–60 s |
+| Any change to the report API (`src/app/report_api.rs`, `src/render_js.rs`) or to the drawing code it runs (`ui/render.js`, `ui/charts.js`, `ui/table.js`, `ui/util.js`…) | The API's tests with V8 built in, then its pages against the same report drawn in Chrome | `cargo test --lib --no-default-features --features render -- report_api render_js`, then `node dev/shots/api-render.mjs` | ~1 min (first build: V8 downloads) |
 | **Every push to GitHub** | On Linux (Ubuntu 24.04): engine tests, the web server and its checks, the desktop app, `.deb` and AppImage | GitHub Actions, `.github/workflows/linux.yml`; `gh run watch` | ~20 min |
 | Before a release that changes what users do | The **Test** steps in the user guide, by a person | [ui/help/guide.md](ui/help/guide.md), each chapter's *Test* list | — |
 
@@ -38,6 +39,7 @@ About 150 tests in `src/` (`#[test]`); they need `data/demo.duckdb` (the demo ba
 | **Batch and client list** | batch reports leave the open document alone, the overview's figures and coming events, incremental activity index (`batch_reports_leave_the_open_document_alone`, `overview_reads_figures_and_whats_coming`) |
 | **AI** (no provider called) | identities masked and restored, data levels by bank / group / person, plans checked before applying, answers retried with the error, request formats per provider (`identities_go_out_masked_and_come_back`, `ai_level_by_person_group_or_bank`, `design_assistant_builds_a_page_in_one_undo_step`) |
 | **Export** | PDF pages with embedded text, a valid PowerPoint package, Word and PowerPoint text extraction (`pdf_has_pages_and_embedded_text`, `pptx_is_a_valid_package`) |
+| **Report API** | a request's client by the bank's id, named periods, parameters checked against the report's own, refusals with their status (404 / 403 / 422), the open document untouched; with `--features render`: every page drawn by the UI's code in V8 and written as a PDF, ICU's number formats, text measured by the core (`makes_the_report_asked_for`, `refuses_what_it_cant_make`, `named_periods_count_back_from_today`, `draws_the_report_without_a_browser`, `measures_text_and_formats_numbers`) |
 | **Activity log** | events written and read back, work sessions (`events_are_written_and_read_back_filtered_with_ai_requests`) |
 
 **Without the client's typeface.** The repository doesn't have `ui/fonts/private/` (`.gitignore`), so before a
@@ -143,6 +145,13 @@ a 10-core Mac (29 Oct 2026), dev build: one person's sign-in + report + period c
 person opens a report in 0.6 s, 10 at once in 2.6 s, 50 in 11 s, 100 in 24 s, with no failures and no data errors —
 the server is busy with the work, not waiting on locks. The release build measures the same (0.56 s alone, 3.1 s for
 10, 13 s for 50, 25 s for 100): the time is DuckDB running the report's SQL, already optimised in the dev build.
+
+**Report API pages against the browser:** `draws_the_report_without_a_browser` writes the report it drew to
+`$TMPDIR/quire_api_report` (`.json` its state, `.svg` its pages, `.pdf`); `node dev/shots/api-render.mjs` draws the same
+state in headless Chrome as the app does and compares every text item. On 10 Nov 2026 (UHNWI, 18 pages): all 1,750
+items had the same words (no line wrapped or cut elsewhere); 1,210 in the same place, the rest within 1.85 pt (column
+widths, from kerning the core doesn't measure). One report draws in ~50 ms once the engine is up (~0.27 s for the
+first on a thread).
 
 Unit tests for the server parts: `secrets_are_sealed_and_come_back`, `connection_passwords_come_off_and_back`,
 `hidden_passwords_are_put_back`, `wrong_passwords_rest_the_login`.

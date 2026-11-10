@@ -9,6 +9,24 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
 
 ---
 
+## Unreleased — 10 November 2026
+
+### New (not usable yet: the report API's first two steps)
+
+- **The core makes a report for another system's request**: a published report (UHNWI when none is named), a client
+  by the bank's id, a period as dates or by name (`ytd`, `last_month`, `last_quarter`, `last_year`) and the report's
+  other parameters, checked against the report's own. The caller's access applies, and a request it can't serve is
+  refused with the reason (`src/app/report_api.rs`; plan in [`backlog/report-api.md`](backlog/report-api.md)).
+- **Report pages drawn without a browser.** The web server can run the app's own drawing code in V8 (Chrome's
+  engine), measuring text with Quire's fonts, and write the pages as a PDF. The pages match the browser's word for
+  word; positions differ by under 2 pt. Built with `--features render` (`src/render_js.rs`).
+
+### Improved
+
+- `ui/util.js` loads outside a browser (no canvas or `navigator` needed at start), so the drawing code runs on the server.
+
+---
+
 ## 0.2.0 — 5 November 2026
 
 ### New

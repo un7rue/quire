@@ -11,6 +11,9 @@ default-run = "quire"
 [features]
 default = ["desktop"]
 desktop = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-build", "dep:objc2", "dep:objc2-app-kit", "dep:block2"]
+# Drawing report pages without a browser (the report API): the UI's own drawing code in V8.
+#   cargo build --release --no-default-features --features render --bin quire-server
+render = ["dep:v8", "dep:deno_core_icudata"]
 
 [lib]
 name = "quire"
@@ -34,6 +37,9 @@ tauri-plugin-dialog = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
+# V8 and the ICU data its version reads (set_common_data_78): number formats as the browser writes them
+v8 = { version = "152.2", optional = true }
+deno_core_icudata = { version = "0.78", optional = true }
 calamine = "0.26"
 csv = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }

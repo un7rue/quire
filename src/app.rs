@@ -11,6 +11,8 @@ use std::sync::{Mutex, MutexGuard};
 use crate::host::{Host, H};
 use crate::{ai, ai_admin, ai_design, ai_report, ai_restyle, audit, auth, client_sample, data, dbconn, export, fonts, layout, looks, model, overview, period, proposal, proposals, python, query, sample, theme_studio, uhnwi_sample, uhnwi_theme, vm};
 
+mod report_api;
+
 const UNDO_LIMIT: usize = 100;
 /// Documents open at once (templates, reports and themes).
 const MAX_OPEN: usize = 10;
@@ -5148,6 +5150,13 @@ fn batch_make(app: &App, kind: &str, client: &str, start: Option<chrono::NaiveDa
         d.params.start = Some(s);
         d.params.date = e;
     }
+    let mut sub = load_apart(app, d, client)?;
+    let st = sub.resp();
+    Ok((sub, st))
+}
+
+/// `d` (made for `client`) loaded in a workspace of its own, with the person's access applied.
+fn load_apart(app: &App, d: Doc, client: &str) -> Result<App, String> {
     let mut sub = batch_app(app);
     sub.load(d, None);
     sub.enforce_access();
@@ -5156,8 +5165,7 @@ fn batch_make(app: &App, kind: &str, client: &str, start: Option<chrono::NaiveDa
     if now != client {
         return Err(format!("“{client}” isn't one of your clients."));
     }
-    let st = sub.resp();
-    Ok((sub, st))
+    Ok(sub)
 }
 
 /// One client's report for a batch (see `batch_make`); the open documents aren't touched.
@@ -8055,7 +8063,7 @@ mod tests {
         let _ = std::fs::remove_dir(&dir);
     }
 
-    fn app_with(doc: Doc) -> App {
+    pub(super) fn app_with(doc: Doc) -> App {
         let mut a = App {
             doc: None,
             path: None,

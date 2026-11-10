@@ -28,6 +28,8 @@ mod proposals;
 mod period;
 mod python;
 mod query;
+#[cfg(feature = "render")]
+mod render_js;
 mod sample;
 mod text;
 mod vm;
