@@ -9,6 +9,8 @@ mod ai_restyle;
 mod ai_report;
 mod ai_admin;
 mod api_accounts;
+#[cfg(feature = "render")]
+mod api_jobs;
 mod audit;
 mod auth;
 mod client_sample;
@@ -40,6 +42,8 @@ mod host;
 pub mod secrets;
 
 pub use app::{dispatch, AppState, COMMANDS};
+#[cfg(feature = "render")]
+pub use api_jobs::{ApiService, Response as ApiResponse};
 pub use fonts::warm_up;
 pub use host::{FileSpec, Host};
 

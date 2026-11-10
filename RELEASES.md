@@ -11,7 +11,17 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
 
 ## Unreleased — 10 November 2026
 
-### New (not usable yet: the report API's first three steps)
+### New
+
+- **The report API** (on the web server, built with `--features render`). Other systems — a CRM, a client portal, a
+  scheduler — ask Quire for a client's report, or a batch of them, with their API account's key, and download the
+  PDFs (one report) or a zip (a batch). `POST /api/v1/reports` answers at once with a job, or refuses a request it
+  can't serve with the reason (a client outside the account's access, an unknown client, a parameter the report
+  doesn't take, a bad period); `GET /api/v1/jobs/{id}` shows each report's status, pages, layout issues and the
+  values used. A retried request with the same `Idempotency-Key` gets the first job; 60 new requests a minute per
+  account. Jobs survive a restart; their files are deleted after the days set in Admin → API. Each request and report
+  is in Activity under the account, with a new *API* filter there. One 18-page report takes about a second
+  (`src/api_jobs.rs`; README *On a server*).
 
 - **Admin → API** (on the web server): an account for each system that will ask for reports — a CRM, a client portal,
   a scheduler. Each has its own key, the clients and products it may report on, and the reports it may ask for. The key

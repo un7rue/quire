@@ -1,8 +1,8 @@
 //! Quire in the browser: serves the same `ui/` as the desktop app, and runs its commands
 //! (`POST /api/call` with `{cmd, args}`) through the same core.
 //!
-//!     cargo run --no-default-features --bin quire-server -- [--port 8766] [--data DIR] [--ui DIR] [--host 127.0.0.1]
-//!         [--allow-dir DIR]… [--allow-host HOST]… [--secure] [--dev]
+//!     cargo run --no-default-features --features render --bin quire-server -- [--port 8766] [--data DIR] [--ui DIR]
+//!         [--host 127.0.0.1] [--allow-dir DIR]… [--allow-host HOST]… [--api-workers N] [--secure] [--dev]
 //!
 //! Each browser gets a workspace of its own (a cookie): its own sign-in, open documents, undo
 //! and data. Each person's settings and files are kept apart in the data folder:
@@ -17,6 +17,10 @@
 //! to `--allow-host` servers when any are given. `--secure`: the cookie only travels over HTTPS
 //! (run it behind an HTTPS proxy).
 //!
+//! The report API (`/api/v1/…`, src/api_jobs.rs): other systems ask for reports with an API
+//! account's key (Admin → API). Built with `--features render` (the pages are drawn in V8);
+//! `--api-workers N` reports are made at once (2).
+//!
 //! `--dev` lets pages from other local ports call it (the headless checks in dev/shots); they
 //! share one workspace, as they can't carry the cookie.
 
@@ -28,6 +32,12 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// The report API, when the server is built with the renderer.
+#[cfg(feature = "render")]
+type Api = quire::ApiService;
+#[cfg(not(feature = "render"))]
+struct Api;
 
 /// A workspace left alone this long is closed (its documents with it).
 const IDLE: Duration = Duration::from_secs(12 * 3600);
@@ -196,6 +206,7 @@ struct Opts {
     secure: bool,
     allow_dirs: Vec<PathBuf>,
     allow_hosts: Vec<String>,
+    api_workers: usize,
 }
 
 fn opts() -> Opts {
@@ -211,6 +222,7 @@ fn opts() -> Opts {
         secure: false,
         allow_dirs: Vec::new(),
         allow_hosts: Vec::new(),
+        api_workers: 2,
     };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -224,12 +236,13 @@ fn opts() -> Opts {
             "--secure" => o.secure = true,
             "--allow-dir" => o.allow_dirs.push(PathBuf::from(val())),
             "--allow-host" => o.allow_hosts.push(val()),
+            "--api-workers" => o.api_workers = val().parse().ok().filter(|n| (1..=64).contains(n)).unwrap_or_else(|| die("--api-workers needs a number from 1 to 64")),
             "-V" | "--version" => {
                 println!("quire-server {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
             "-h" | "--help" => {
-                println!("quire-server {} [--port 8766] [--data DIR] [--ui DIR] [--host 127.0.0.1] [--allow-dir DIR]… [--allow-host HOST]… [--secure] [--dev] [--version]", env!("CARGO_PKG_VERSION"));
+                println!("quire-server {} [--port 8766] [--data DIR] [--ui DIR] [--host 127.0.0.1] [--allow-dir DIR]… [--allow-host HOST]… [--api-workers N] [--secure] [--dev] [--version]", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
             _ => die(&format!("unknown option {a} (see --help)")),
@@ -262,6 +275,10 @@ fn main() {
     // Python runs outside the fence: only when an administrator switches it on
     quire::guard_python(&o.data.join("users.json"));
     quire::warm_up();
+    #[cfg(feature = "render")]
+    let api = Some(quire::ApiService::start(&o.data, &o.ui, o.api_workers));
+    #[cfg(not(feature = "render"))]
+    let api: Option<Arc<Api>> = None;
     let sessions = Arc::new(Sessions { data: o.data.clone(), map: Mutex::new(HashMap::new()), swept: Mutex::new(Instant::now()) });
     let listener = TcpListener::bind((o.host.as_str(), o.port)).unwrap_or_else(|e| die(&format!("can't listen on {}:{}: {e}", o.host, o.port)));
     println!("Quire on http://{}:{}/  (data in {})", o.host, o.port, o.data.display());
@@ -280,9 +297,9 @@ fn main() {
             let _ = reply(&mut stream, "503 Service Unavailable", "text/plain", b"busy", dev, "");
             continue;
         }
-        let (sessions, ui, busy) = (sessions.clone(), ui.clone(), busy.clone());
+        let (sessions, ui, busy, api) = (sessions.clone(), ui.clone(), busy.clone(), api.clone());
         std::thread::spawn(move || {
-            if let Err(e) = serve(stream, &sessions, &ui, dev, secure) {
+            if let Err(e) = serve(stream, &sessions, &ui, api.as_deref(), dev, secure) {
                 if e.kind() != std::io::ErrorKind::WouldBlock && e.kind() != std::io::ErrorKind::TimedOut {
                     eprintln!("quire-server: {e}");
                 }
@@ -298,7 +315,7 @@ fn cookie(header: &str) -> Option<String> {
 }
 
 /// One request: a command, or a file of the UI.
-fn serve(stream: TcpStream, sessions: &Sessions, ui: &Path, dev: bool, secure: bool) -> std::io::Result<()> {
+fn serve(stream: TcpStream, sessions: &Sessions, ui: &Path, api: Option<&Api>, dev: bool, secure: bool) -> std::io::Result<()> {
     // the request line and headers: 64 KB at most
     let mut reader = BufReader::new(stream.try_clone()?.take(64 * 1024));
     let mut first = String::new();
@@ -306,6 +323,8 @@ fn serve(stream: TcpStream, sessions: &Sessions, ui: &Path, dev: bool, secure: b
     let mut parts = first.split_whitespace();
     let (method, target) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("/").to_string());
     let (mut len, mut sid) = (0usize, None);
+    // the report API's headers (its key, a retried request's key)
+    let mut api_headers: Vec<(String, String)> = Vec::new();
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 || line == "\r\n" || line == "\n" {
@@ -316,6 +335,8 @@ fn serve(stream: TcpStream, sessions: &Sessions, ui: &Path, dev: bool, secure: b
                 len = v.trim().parse().unwrap_or(0);
             } else if k.trim().eq_ignore_ascii_case("cookie") {
                 sid = sid.or_else(|| cookie(v));
+            } else if k.trim().eq_ignore_ascii_case("authorization") || k.trim().eq_ignore_ascii_case("idempotency-key") {
+                api_headers.push((k.trim().to_string(), v.trim().to_string()));
             }
         }
     }
@@ -328,6 +349,11 @@ fn serve(stream: TcpStream, sessions: &Sessions, ui: &Path, dev: bool, secure: b
     let path = target.split(['?', '#']).next().unwrap_or("/");
     match (method.as_str(), path) {
         ("OPTIONS", _) => reply(&mut out, "204 No Content", "text/plain", b"", dev, ""),
+        (_, p) if p.starts_with("/api/v1/") || p == "/api/v1" => {
+            let mut body = vec![0u8; len];
+            reader.read_exact(&mut body)?;
+            api_reply(&mut out, api, &method, path, &api_headers, &body, dev)
+        }
         ("POST", "/api/call") => {
             let mut body = vec![0u8; len];
             reader.read_exact(&mut body)?;
@@ -354,6 +380,38 @@ fn serve(stream: TcpStream, sessions: &Sessions, ui: &Path, dev: bool, secure: b
             None => reply(&mut out, "404 Not Found", "text/plain", b"not found", dev, ""),
         },
         _ => reply(&mut out, "405 Method Not Allowed", "text/plain", b"", dev, ""),
+    }
+}
+
+/// A request to the report API, answered by it (or refused: built without the renderer).
+#[cfg(feature = "render")]
+fn api_reply(out: &mut TcpStream, api: Option<&Api>, method: &str, path: &str, headers: &[(String, String)], body: &[u8], dev: bool) -> std::io::Result<()> {
+    let Some(api) = api else { return reply(out, "503 Service Unavailable", "application/json", br#"{"error":{"status":503,"message":"The report API isn't running."}}"#, dev, "") };
+    let r = api.handle(method, path, headers, body);
+    let status = format!("{} {}", r.status, reason(r.status));
+    let extra: String = r.headers.iter().map(|(k, v)| format!("{k}: {}\r\n", v.replace(['\r', '\n'], ""))).collect();
+    reply(out, &status, r.kind, if method == "HEAD" { b"" } else { &r.body }, dev, &extra)
+}
+
+#[cfg(not(feature = "render"))]
+fn api_reply(out: &mut TcpStream, _api: Option<&Api>, _method: &str, _path: &str, _headers: &[(String, String)], _body: &[u8], dev: bool) -> std::io::Result<()> {
+    reply(out, "501 Not Implemented", "application/json", br#"{"error":{"status":501,"message":"This server was built without the report renderer (cargo build --features render)."}}"#, dev, "")
+}
+
+#[cfg(feature = "render")]
+fn reason(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        202 => "Accepted",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        409 => "Conflict",
+        422 => "Unprocessable Content",
+        429 => "Too Many Requests",
+        _ => "Internal Server Error",
     }
 }
 

@@ -2,8 +2,8 @@
 //! one of the bank's clients, given by the bank's client id, over a period, with the report's other
 //! parameters. It is made apart from the open documents, with the caller's access, as a batch
 //! report is; the pages are then drawn without a browser (src/render_js.rs).
-// the server's endpoints call it (backlog/report-api.md, step 4); until then only the tests do
-#![cfg_attr(not(test), allow(dead_code))]
+// the server's report API (src/api_jobs.rs) uses it: built without the renderer, only the tests do
+#![cfg_attr(not(feature = "render"), allow(dead_code))]
 
 use super::*;
 use chrono::{Datelike, NaiveDate};
@@ -57,7 +57,7 @@ fn invalid(m: impl Into<String>) -> Refusal {
 
 /// A report made for a request: its state (what the pages are drawn from) and the values it was
 /// made with, defaults included.
-pub(super) struct Made {
+pub(crate) struct Made {
     pub state: Json,
     pub used: Json,
 }
@@ -116,9 +116,96 @@ fn value_of(def: &ParamDef, v: &Json) -> Result<Vec<String>, Refusal> {
     Ok(vals)
 }
 
+/// A request that passed the checks that need no data: the report made ready for its client,
+/// period and parameters.
+pub(crate) struct Checked {
+    id: String,
+    client_id: String,
+    client: String,
+    pub start: NaiveDate,
+    pub end: NaiveDate,
+    doc: Doc,
+    asked: Vec<(ParamDef, Vec<String>)>,
+    defaults: Vec<(ParamDef, Vec<String>)>,
+}
+
+impl Checked {
+    pub fn client(&self) -> &str {
+        &self.client
+    }
+    /// The published report's id.
+    pub fn template(&self) -> &str {
+        &self.id
+    }
+}
+
+/// An API account's workspace on the server: apart from everyone's, with the server's settings
+/// and the account's access. A job's worker opens one for each report it makes.
+pub(crate) struct ApiDesk {
+    app: App,
+}
+
+impl ApiDesk {
+    /// The workspace of `session` (an API account's) on the data folder `data`.
+    pub fn open(data: &Path, session: auth::Session) -> Result<ApiDesk, String> {
+        let settings = read_settings(Some(&data.join("settings.json")));
+        let mut app = App {
+            doc: None, path: None, dirty: false, undo: Vec::new(), redo: Vec::new(), engine: Engine::default(), py: PyEngine::new(),
+            user: session.name.clone(), notice: None, parked: Vec::new(), active_id: 0, active_link: None, next_id: 0, studio_base: None,
+            settings: settings.clone(), session: None, clients: None, store_path: Some(data.join("users.json")),
+            data_params: Params::default(), data_report: None, work: Default::default(),
+        };
+        app.py.set_python(Some(settings.python));
+        app.start_session(session)?;
+        Ok(ApiDesk { app })
+    }
+
+    /// The bank's clients (id, name, banker), read once for a batch's checks.
+    pub fn clients(&self) -> Result<Json, Refusal> {
+        auth::options(&self.app.store()).map_err(|e| Refusal { status: 500, message: e })
+    }
+
+    pub fn check(&self, req: &Request, today: NaiveDate, clients: Option<&Json>) -> Result<Checked, Refusal> {
+        check(&self.app, req, today, clients)
+    }
+
+    pub fn make(&self, req: &Request, today: NaiveDate) -> Result<Made, Refusal> {
+        make(&self.app, req, today)
+    }
+
+    /// The reports this account may ask for, each with what a request may set and the defaults
+    /// that apply (`GET /api/v1/templates`).
+    pub fn templates(&self) -> Json {
+        let st = self.app.store();
+        let account = self.app.session.as_ref().and_then(|s| s.login.strip_prefix("api:")).and_then(|id| st.api.clients.iter().find(|c| c.id == id));
+        let list: Vec<Json> = st.reports.iter()
+            .filter(|p| p.published && account.is_some_and(|a| a.may_use(&p.id)))
+            .filter(|p| !st.api.reports.get(&p.id).is_some_and(|r| r.off))
+            .map(|p| {
+                let rules = st.api.reports.get(&p.id).cloned().unwrap_or_default();
+                let defs = report_doc(&self.app, &p.id).map(|d| d.param_defs).unwrap_or_default();
+                let params: Vec<Json> = defs.iter().filter(|d| !auth::is_client_param(d) && rules.params.get(&d.name).is_some_and(|r| r.accept)).map(|d| {
+                    let api_default = rules.params.get(&d.name).map(|r| r.default.clone()).unwrap_or(Json::Null);
+                    let default = if !api_default.is_null() { api_default } else if d.multi { json!(d.default.split('\u{1f}').filter(|x| !x.is_empty()).collect::<Vec<_>>()) } else { json!(d.default) };
+                    json!({"name": d.name, "label": d.label, "kind": if d.kind.is_empty() { "text" } else { d.kind.as_str() }, "multi": d.multi,
+                        "choices": d.options, "default": default})
+                }).collect();
+                json!({"id": p.id, "title": p.title, "description": p.description, "default": p.id == DEFAULT_TEMPLATE, "params": params})
+            }).collect();
+        json!({"templates": list, "periods": PRESETS})
+    }
+}
+
 /// Makes the report a request asks for, as the signed-in person (or API account) of `app`;
 /// `today` dates the named periods.
 pub(super) fn make(app: &App, req: &Request, today: NaiveDate) -> Result<Made, Refusal> {
+    build(app, check(app, req, today, None)?)
+}
+
+/// What can be checked before the data is read: the report, the client, access, the period and the
+/// parameters. Quick, so a request is answered at once; `clients` is the bank's client list
+/// (`auth::options`), when the caller has it already (a batch).
+pub(super) fn check(app: &App, req: &Request, today: NaiveDate, clients: Option<&Json>) -> Result<Checked, Refusal> {
     gate(app, &["user", "design"]).map_err(forbidden)?;
     let session = app.session.as_ref().ok_or_else(|| forbidden("Sign in first."))?;
     // the report
@@ -143,7 +230,14 @@ pub(super) fn make(app: &App, req: &Request, today: NaiveDate) -> Result<Made, R
     if client_id.is_empty() {
         return Err(invalid("client_id is empty."));
     }
-    let opts = auth::options(&st).map_err(|e| Refusal { status: 500, message: e })?;
+    let read;
+    let opts = match clients {
+        Some(o) => o,
+        None => {
+            read = auth::options(&st).map_err(|e| Refusal { status: 500, message: e })?;
+            &read
+        }
+    };
     let client = opts["clients"].as_array().and_then(|a| a.iter().find(|c| c["id"] == client_id)).and_then(|c| c["name"].as_str()).map(String::from)
         .ok_or_else(|| not_found(format!("No client with id “{client_id}”.")))?;
     if let Some(allowed) = &app.clients {
@@ -185,6 +279,13 @@ pub(super) fn make(app: &App, req: &Request, today: NaiveDate) -> Result<Made, R
         d.params.values.insert(name.clone(), vals.join("\u{1f}"));
         defaults.push((def, vals));
     }
+    Ok(Checked { id: id.to_string(), client_id: client_id.to_string(), client, start, end, doc: d, asked, defaults })
+}
+
+/// Reads the data and makes the report a check let through.
+pub(super) fn build(app: &App, c: Checked) -> Result<Made, Refusal> {
+    let Checked { id, client_id, client, start, end, doc: d, asked, defaults } = c;
+    let session = app.session.as_ref().ok_or_else(|| forbidden("Sign in first."))?;
     let mut sub = load_apart(app, d, &client).map_err(forbidden)?;
 
     // values read from the data: one of its choices, and within the caller's products
@@ -231,7 +332,7 @@ pub(super) fn make(app: &App, req: &Request, today: NaiveDate) -> Result<Made, R
 /// A report as a file: the PDF, its name, its page count and the layout issues that need a look
 /// (content cut off or running past the page).
 #[cfg(feature = "render")]
-pub(super) struct Drawn {
+pub(crate) struct Drawn {
     pub pdf: Vec<u8>,
     pub name: String,
     pub pages: usize,
@@ -240,7 +341,7 @@ pub(super) struct Drawn {
 
 /// Draws a made report's pages with the UI's drawing code in `ui` and writes them as a PDF.
 #[cfg(feature = "render")]
-pub(super) fn draw(ui: &Path, made: &Made) -> Result<Drawn, Refusal> {
+pub(crate) fn draw(ui: &Path, made: &Made) -> Result<Drawn, Refusal> {
     let fail = |message: String| Refusal { status: 500, message };
     let st = &made.state;
     let svgs = crate::render_js::pages(ui, st).map_err(fail)?;

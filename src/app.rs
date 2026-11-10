@@ -12,6 +12,10 @@ use crate::host::{Host, H};
 use crate::{ai, ai_admin, ai_design, api_accounts, ai_report, ai_restyle, audit, auth, client_sample, data, dbconn, export, fonts, layout, looks, model, overview, period, proposal, proposals, python, query, sample, theme_studio, uhnwi_sample, uhnwi_theme, vm};
 
 mod report_api;
+#[cfg(feature = "render")]
+pub(crate) use report_api::{ApiDesk, PeriodAsked, Refusal, Request};
+#[cfg(feature = "render")]
+pub(crate) use report_api::{draw, Drawn};
 
 const UNDO_LIMIT: usize = 100;
 /// Documents open at once (templates, reports and themes).

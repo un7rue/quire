@@ -44,6 +44,7 @@ cd Quire
 python3 data/make_demo_db.py                 # only if data/demo.duckdb was not copied
 cargo test                                   # ~150 engine tests; first build ~5 min (DuckDB compiles)
 cargo run --no-default-features --bin quire-server   # web version → http://127.0.0.1:8766/
+cargo run --no-default-features --features render --bin quire-server   # …with the report API (V8, prebuilt download)
 cargo run                                    # desktop app (Tauri)
 ```
 

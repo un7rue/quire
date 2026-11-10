@@ -15,8 +15,9 @@ The checks run before a change is called done, and how to run them yourself. Cha
 | Any change to selection or the inspector's tabs | Several widgets selected: shared settings, changes, moves and deletes reach all | `node dev/shots/multi-select.mjs <out>` (needs the web server) | 30 s |
 | A change to a screen (client list, dialogs, admin, AI panes) | The screen driven in a headless browser and screenshotted | `dev/shots/*.mjs` | 10–60 s |
 | Any change to Admin → API (`ui/apiadmin.js`, the access editor in `ui/areas.js`) | An account added, its key shown once and nowhere after, a report's parameters and default saved, Activity without the key | `node dev/shots/admin-api.mjs <out> [en\|ru]` (needs the web server) | 30 s |
-| Any change to the report API (`src/app/report_api.rs`, `src/api_accounts.rs`, `src/render_js.rs`) or to the drawing code it runs (`ui/render.js`, `ui/charts.js`, `ui/table.js`, `ui/util.js`…) | The API's tests with V8 built in, then its pages against the same report drawn in Chrome | `cargo test --lib --no-default-features --features render -- report_api render_js api_accounts`, then `node dev/shots/api-render.mjs` | ~1 min (first build: V8 downloads) |
-| **Every push to GitHub** | On Linux (Ubuntu 24.04): engine tests, the web server and its checks, the desktop app, `.deb` and AppImage | GitHub Actions, `.github/workflows/linux.yml`; `gh run watch` | ~20 min |
+| Any change to the report API (`src/app/report_api.rs`, `src/api_accounts.rs`, `src/render_js.rs`) or to the drawing code it runs (`ui/render.js`, `ui/charts.js`, `ui/table.js`, `ui/util.js`…) | The API's tests with V8 built in, then its pages against the same report drawn in Chrome | `cargo test --lib --no-default-features --features render -- report_api render_js api_accounts api_jobs`, then `node dev/shots/api-render.mjs` | ~1 min (first build: V8 downloads) |
+| Any change to the report API's server side (`src/api_jobs.rs`, `src/bin/quire-server.rs`) | End to end against a running server: an account's key, one report, a batch's zip, refusals, Activity | `node dev/web/api-checks.mjs` ([below](#6-web-server-checks)) | 10 s |
+| **Every push to GitHub** | On Linux (Ubuntu 24.04): engine tests (with the renderer), the web server and its checks, the report API's checks, the desktop app, `.deb` and AppImage | GitHub Actions, `.github/workflows/linux.yml`; `gh run watch` | ~20 min |
 | Before a release that changes what users do | The **Test** steps in the user guide, by a person | [ui/help/guide.md](ui/help/guide.md), each chapter's *Test* list | — |
 
 A change is done when `cargo test` passes in full. Failures are fixed, not skipped. If a check wasn't run, the release
@@ -146,6 +147,22 @@ a 10-core Mac (29 Oct 2026), dev build: one person's sign-in + report + period c
 person opens a report in 0.6 s, 10 at once in 2.6 s, 50 in 11 s, 100 in 24 s, with no failures and no data errors —
 the server is busy with the work, not waiting on locks. The release build measures the same (0.56 s alone, 3.1 s for
 10, 13 s for 50, 25 s for 100): the time is DuckDB running the report's SQL, already optimised in the dev build.
+
+**Report API end to end** (a server built with the renderer, on fresh data):
+
+```sh
+QUIRE_SECRET_KEY='a test passphrase here' cargo run --no-default-features --features render --bin quire-server -- \
+    --port 8771 --data /tmp/quire-api-check      # a new, empty folder
+node dev/web/api-checks.mjs http://127.0.0.1:8771
+```
+
+An administrator makes an API account; with its key: no key or a wrong one refused (401); the reports it may ask
+for; one report (202, a job, done with its pages and values, the PDF); the same `Idempotency-Key` getting the same job;
+a batch of 3 (409 while running, then a zip, and each PDF on its own); another banker's client refusing the whole batch
+(403, the client named); an unknown client (404), a parameter or period that doesn't fit (422); Activity with the
+requests and reports under the account, never the key; a switched-off account's key refused. On 10 Nov 2026 (dev
+build, 2 workers): one report 1.0 s, a batch of 3 in 1.8 s. The unit tests (`api_jobs`, with `--features render`):
+jobs kept across a restart and finished, files deleted past the retention days, the rate limit.
 
 **Report API pages against the browser:** `draws_the_report_without_a_browser` writes the report it drew to
 `$TMPDIR/quire_api_report` (`.json` its state, `.svg` its pages, `.pdf`); `node dev/shots/api-render.mjs` draws the same

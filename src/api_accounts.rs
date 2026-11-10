@@ -10,8 +10,8 @@
 //! report's other parameters are taken only when Admin lets the API set them, and Admin can give
 //! each a default for API requests (else the template's own applies). A report can be kept off the
 //! API altogether.
-// signing in with a key is for the server's endpoints (backlog/report-api.md, step 4); until then the tests use it
-#![cfg_attr(not(test), allow(dead_code))]
+// signing in with a key is for the server's report API (src/api_jobs.rs, built with the renderer)
+#![cfg_attr(not(feature = "render"), allow(dead_code))]
 
 use std::collections::BTreeMap;
 
