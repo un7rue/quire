@@ -7,6 +7,7 @@
 //!     GET  /api/v1/jobs/{id}/file       the PDF (one client), or a zip of the batch's PDFs
 //!     GET  /api/v1/jobs/{id}/files/{client_id}   one client's PDF of a batch
 //!     GET  /api/v1/templates            the reports this account may ask for, and what each accepts
+//!     GET  /api/v1/openapi.json         the description for the calling teams (docs/report-api/), no key
 //!
 //! A request may name a `callback_url` (on a host Admin allows for the account): the finished job
 //! is POSTed there, signed (src/api_delivery.rs), and tried again a few times if it isn't taken.
@@ -42,6 +43,9 @@ const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 const CALLBACK_WAITS: [u64; 4] = [0, 10, 60, 300];
 #[cfg(test)]
 const CALLBACK_WAITS: [u64; 3] = [0, 0, 0];
+
+/// The API's description (OpenAPI 3.1), for the calling teams' tools.
+const OPENAPI: &str = include_str!("../docs/report-api/openapi.json");
 
 /// An answer: status, type, body, extra headers.
 pub struct Response {
@@ -265,6 +269,9 @@ impl ApiService {
     /// Answers one request to `/api/v1/…`.
     pub fn handle(&self, method: &str, path: &str, headers: &[(String, String)], body: &[u8]) -> Response {
         let header = |name: &str| headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.trim());
+        if method == "GET" && path.trim_end_matches('/') == "/api/v1/openapi.json" {
+            return Response { status: 200, kind: "application/json", body: OPENAPI.as_bytes().to_vec(), headers: vec![] };
+        }
         let Some(key) = header("authorization").and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer "))) else {
             let mut r = Response::error(401, "Send the API key: Authorization: Bearer <key>.");
             r.headers.push(("WWW-Authenticate".into(), "Bearer".into()));
@@ -1000,6 +1007,36 @@ mod tests {
         assert_eq!((c.status.as_str(), c.attempts, c.code), ("failed", CALLBACK_WAITS.len() as u32, 500));
         assert_eq!(seen.lock().unwrap().len(), CALLBACK_WAITS.len());
         let _ = key;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The description the calling teams get is valid JSON, served without a key, and names exactly
+    /// the paths and methods the service answers.
+    #[test]
+    fn the_description_matches_the_routes() {
+        let (dir, key) = server();
+        let svc = ApiService::start(&dir, &ui(), 1);
+        let r = svc.handle("GET", "/api/v1/openapi.json", &[], b"");
+        assert_eq!(r.status, 200, "no key needed");
+        let doc: Json = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(doc["openapi"], "3.1.0");
+        let mut described: Vec<String> = doc["paths"].as_object().unwrap().iter()
+            .flat_map(|(p, ops)| ops.as_object().unwrap().keys().map(move |m| format!("{} {p}", m.to_uppercase()))).collect();
+        described.sort();
+        let mut served = vec!["POST /api/v1/reports", "GET /api/v1/jobs/{job_id}", "GET /api/v1/jobs/{job_id}/file", "GET /api/v1/jobs/{job_id}/files/{client_id}", "GET /api/v1/templates", "GET /api/v1/openapi.json"];
+        served.sort();
+        assert_eq!(described, served);
+        // each one is answered (with a key), not "no such path"
+        for (m, p) in [("GET", "/api/v1/jobs/jx"), ("GET", "/api/v1/jobs/jx/file"), ("GET", "/api/v1/jobs/jx/files/C0001"), ("GET", "/api/v1/templates")] {
+            let r = svc.handle(m, p, &[("Authorization".into(), format!("Bearer {key}"))], b"");
+            let msg = String::from_utf8_lossy(&r.body).to_string();
+            assert!(!msg.contains("No such API path"), "{m} {p}: {msg}");
+        }
+        // the request's fields are the ones the service reads
+        let fields: Vec<&String> = doc["components"]["schemas"]["ReportRequest"]["properties"].as_object().unwrap().keys().collect();
+        let probe = json!({"template": "x", "client_id": "x", "clients": ["x"], "period": {"preset": "ytd"}, "params": {}, "format": "pdf", "callback_url": "https://x/"});
+        assert_eq!(fields.len(), probe.as_object().unwrap().len());
+        assert!(serde_json::from_value::<JobRequest>(probe).is_ok(), "every described field is read");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

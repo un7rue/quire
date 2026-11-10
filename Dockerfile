@@ -12,6 +12,7 @@ FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
+COPY docs ./docs
 COPY resources ./resources
 COPY ui/fonts ./ui/fonts
 # --features render: the report API draws pages in V8 (prebuilt, downloaded by the v8 crate)

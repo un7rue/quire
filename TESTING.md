@@ -156,7 +156,7 @@ QUIRE_SECRET_KEY='a test passphrase here' cargo run --no-default-features --feat
 node dev/web/api-checks.mjs http://127.0.0.1:8771
 ```
 
-An administrator makes an API account; with its key: no key or a wrong one refused (401); the reports it may ask
+The description is served without a key; an administrator makes an API account; with its key: no key or a wrong one refused (401); the reports it may ask
 for; one report (202, a job, done with its pages and values, the PDF); the same `Idempotency-Key` getting the same job;
 a batch of 3 (409 while running, then a zip, and each PDF on its own); another banker's client refusing the whole batch
 (403, the client named); an unknown client (404), a parameter or period that doesn't fit (422); a folder destination
@@ -164,9 +164,14 @@ tested; a callback to a host not allowed refused (422); a batch copied to the de
 signature checked with the key alone as the caller's team would (Node's crypto); Activity with the
 requests and reports under the account, never the key; a switched-off account's key refused. On 10 Nov 2026 (dev
 build, 2 workers): one report 1.0 s, a batch of 3 in 1.8 s. The unit tests (`api_jobs`, with `--features render`):
+the description (`docs/report-api/openapi.json`) naming exactly the routes served and the request's fields,
 jobs kept across a restart and finished, files deleted past the retention days, the rate limit, copies and a signed
 callback, a callback not taken tried again then failed; `api_delivery`: HMAC against RFC 4231, folder copies, an S3
 upload as a signed PUT (to a stand-in server), signed callbacks; `api_accounts`: callback hosts, destinations.
+
+**The description and the calling teams' guide.** After a change to the API, lint the description
+(`npx @redocly/cli@1.25.0 lint docs/report-api/openapi.json`: valid; two warnings — the callback and the description
+itself have no error answers — are expected) and keep `docs/report-api/README.md`'s examples to what the server sends.
 
 **Report API pages against the browser:** `draws_the_report_without_a_browser` writes the report it drew to
 `$TMPDIR/quire_api_report` (`.json` its state, `.svg` its pages, `.pdf`); `node dev/shots/api-render.mjs` draws the same

@@ -218,7 +218,7 @@ to the client. It goes after the facts and before the legal text, in a section o
 
 ### The Admin area
 
-Admin has five parts, listed on its left:
+Admin has these parts, listed on its left:
 
 | Part | What is there |
 |---|---|
@@ -227,6 +227,7 @@ Admin has five parts, listed on its left:
 | **Access** | Everyone at a glance, one row per person: roles, clients, products, groups, the reports they get and what AI may send for them (and why). Tiles on top count who can sign in, administrators, who sees every client, who is restricted, who may send figures to AI and who still has the demo password. Click a person to open them in *Users & roles*. |
 | **AI** | The bank's AI policy (on/off, *Structure only* or *Figures*, providers allowed), bank-wide keys, what AI may send person by person, and the use of the last 30 days by person and by task. |
 | **Activity** | Work sessions (who worked on which report, for which client, how long, what they changed, exported and asked AI) and every event — see below. |
+| **API** | *Web version only.* The systems that ask Quire for reports (a CRM, a client portal, a scheduler): their keys, clients and reports, what each report accepts from them, where their reports are copied — see [The report API](#the-report-api) below. |
 
 ![Admin → Access](img/56-admin-access.png)
 
@@ -284,6 +285,56 @@ Cyrillic intact). Passwords and keys are never written to the log. It lives in t
 In **Admin**, *Groups* lists the groups (Private bankers, Insurance desk, Analysts to start with): name, members and
 the reports given to each. A person's page shows their **groups** (tick to join) and their **reports** — through a
 group, to everyone, or given to them (tick to give or take away one directly).
+
+### The report API
+
+*In the web version, on a server built with the report renderer.* Other systems can ask Quire for a client's report,
+or a batch of them, and get the PDFs back without anyone opening Quire. A CRM can put the quarter's report next to
+the client, a portal can offer it for download, a scheduler can make every client's report at quarter end. Their
+developers have their own guide, `docs/report-api/README.md`, and the server describes itself at
+`/api/v1/openapi.json`.
+
+![Admin → API](img/59-admin-api.png)
+
+**Admin → API** is where the administrator decides what each system may do:
+
+- **API accounts**, one per system: a name and what it is, and *Its key works* (off: the system is refused until it's
+  switched back on). **Client access** is the same as a person's: every client, bankers' coverage, clients one by one,
+  and the products the reports show. **Reports**: the published reports it may ask for (none ticked: all of them).
+- **The key.** *Add and make its key* shows the key **once**, with *Copy*. Give it to the system's team, as you would
+  a password; Quire keeps only a fingerprint and can't show it again. **New key…** replaces it at once: the old one
+  stops working, so do it with the team. Changing an account's id makes a new key too.
+- **Delivery.** *Copy its reports to* puts every report the system gets also in a **destination**. *Callbacks may go
+  to* lists the hosts (like `crm.bank.local`) the system may ask to be called back at when its reports are ready;
+  with none, it can't ask for callbacks. Calls are signed, so the system can tell they came from Quire.
+- **What each report accepts.** A request always gives the client (by the bank's id) and the period: two dates, or
+  this year so far, last month, last quarter or last year. Tick *A request may set it* for the report's other
+  parameters a system may choose (the UHNWI report's *Products*). A **default for API requests** applies when a
+  request leaves one out; empty, the template's own. *Offered over the API* off keeps a report away from every system.
+- **Destinations**: a folder on the server (a mounted file share too) or an S3-compatible bucket (AWS, MinIO, Yandex
+  Object Storage…) with its address, bucket, region, prefix and keys. Reports go into folders by account, day and
+  request. **Test** writes a small file there to show Quire can reach it. The secret key is sealed on the server and
+  never shown again. A destination an account copies to can't be deleted.
+- **Finished files** are kept for download for the days set here (7 to start), then deleted; copies in a destination
+  stay.
+
+A request Quire can't serve is refused at once with the reason. For example: a client outside the account's access,
+a client the bank doesn't have, or a parameter the report doesn't take. A batch with one such client starts nothing.
+Every request, every report made, every copy that failed and every callback is in **Activity** under the account
+(`api:<id>`; the *API* filter shows them), and so is every change made here. Keys never are.
+
+**Test** (on the web version)
+
+- [ ] Admin → API → **Add API account** → name *Client portal*, *Selected clients* → tick one banker → **Add and make
+  its key**: the key is shown once with *Copy*; after *Done* it's nowhere on the page, only its last four characters.
+- [ ] *What each report accepts* → UHNWI → tick *Products*, default `BROK` → **Save**: the toast says so.
+- [ ] With the key, `POST /api/v1/reports` for one of that banker's clients and `last_quarter` (see
+  `docs/report-api/README.md`): `202` and a job; a few seconds later `GET …/file` is an 18-page PDF.
+- [ ] The same for another banker's client: `403`, nothing started.
+- [ ] **Add destination** → a folder → **Test**: *Quire can write to …*. Set the account's *Copy its reports to* to it;
+  ask for a report again: the PDF is also in that folder, under the account's id, the day and the request.
+- [ ] Switch *Its key works* off → the key is refused (`401`). **New key…** → the old key is refused, the new one works.
+- [ ] Activity → *API*: the requests and reports, under `api:client-portal`; *Admin*: the account's changes.
 
 The **Data** role looks after every report's data without opening templates: with nothing open, the violet group in
 the Data area has a report picker and lists that published report's own sources and parameters, read-only — preview
@@ -2008,3 +2059,4 @@ A quick pass through every area; details are in each chapter's **Test** list.
 | 19 | AI design | A page built from a description and undone in one step; the page in front changed | ☐ |
 | 20 | AI look | Template restyled after a pasted picture; text readable; undone in one step | ☐ |
 | 21 | AI report | Brief & pitch, check and a page note on a report; identities masked; refused at Structure only | ☐ |
+| 22 | Report API | *(web)* An API account's key shown once; a report asked for with it downloads as a PDF; another banker's client refused; a copy lands in the destination | ☐ |

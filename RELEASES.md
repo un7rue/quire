@@ -29,6 +29,10 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
 - **Callbacks.** A request can name a `callback_url`: when the job is done Quire POSTs it there, signed so the
   caller's team can check it came from Quire using only their API key, and tries again up to four times. Only hosts
   Admin lists for the account are called (`src/api_delivery.rs`).
+- **A guide for the teams that call it** (`docs/report-api/README.md`): a quick start, every field and error, and how
+  to check a callback's signature in Python and Node (both run against a real callback). The OpenAPI 3.1 description
+  (`docs/report-api/openapi.json`) is served at `/api/v1/openapi.json`; a test keeps it in step with the routes.
+- **The user guide** has *The report API* (chapter 1, Admin area): what Admin → API controls, with test steps.
 
 - **Admin → API** (on the web server): an account for each system that will ask for reports — a CRM, a client portal,
   a scheduler. Each has its own key, the clients and products it may report on, and the reports it may ask for. The key

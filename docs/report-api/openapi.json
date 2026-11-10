@@ -1,0 +1,972 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Quire report API",
+    "version": "1",
+    "description": "Ask Quire for a client's report, or a batch of them, and download the PDFs.\n\nEvery request carries an API account's key (`Authorization: Bearer qk.<account>.<secret>`), made in Quire under **Admin → API**. The account decides which clients and products it may report on, which reports it may ask for, what each report accepts, and where its files are copied.\n\nA request is checked at once: one Quire can't serve is refused with the reason, and a batch with any client it can't report on starts nothing. An accepted request becomes a **job**: poll `GET /api/v1/jobs/{id}` (or give a `callback_url`) and download the file when it is `done`. Files are kept for the days set in Admin → API (7 to start), then deleted.\n\nSee docs/report-api/README.md for examples and how to check a callback's signature.",
+    "license": {
+      "name": "AGPL-3.0-only",
+      "identifier": "AGPL-3.0-only"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The Quire web server (built with --features render)"
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "paths": {
+    "/api/v1/reports": {
+      "post": {
+        "operationId": "requestReports",
+        "summary": "Ask for a report (one client) or a batch (several)",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Any text unique to this request. Sending the same request again with the same key returns the job made the first time (header `Idempotent-Replayed: true`) instead of a new one."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportRequest"
+              },
+              "examples": {
+                "one": {
+                  "summary": "One client, last quarter",
+                  "value": {
+                    "client_id": "C0025",
+                    "period": {
+                      "preset": "last_quarter"
+                    }
+                  }
+                },
+                "dates": {
+                  "summary": "Dates, a template and products",
+                  "value": {
+                    "template": "uhnwi",
+                    "client_id": "C0025",
+                    "period": {
+                      "start": "2026-07-01",
+                      "end": "2026-09-30"
+                    },
+                    "params": {
+                      "product": [
+                        "BROK",
+                        "BANK"
+                      ]
+                    }
+                  }
+                },
+                "batch": {
+                  "summary": "A batch with a callback",
+                  "value": {
+                    "clients": [
+                      "C0025",
+                      "C0021",
+                      "C0034"
+                    ],
+                    "period": {
+                      "preset": "ytd"
+                    },
+                    "callback_url": "https://crm.bank.local/quire/done"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted: the job, with its reports queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "The job's address.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Idempotent-Replayed": {
+                "description": "`true` when an earlier job is returned for the same Idempotency-Key.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body isn't JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A client or product outside the account's access, or a report it may not ask for (or kept off the API). For a batch, `error.clients` lists each client refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such report or client.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request doesn't fit: no client or both `client_id` and `clients`, an unknown field, a bad period, a parameter the report doesn't take over the API or a value it doesn't accept, a format other than pdf, more than 2000 clients, or a callback to a host Admin doesn't allow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooMany"
+          }
+        },
+        "callbacks": {
+          "jobFinished": {
+            "{$request.body#/callback_url}": {
+              "post": {
+                "summary": "The job is done (sent once it finishes; tried up to four times until a 2xx comes back)",
+                "parameters": [
+                  {
+                    "name": "X-Quire-Event",
+                    "in": "header",
+                    "required": true,
+                    "schema": {
+                      "type": "string",
+                      "const": "job.finished"
+                    }
+                  },
+                  {
+                    "name": "X-Quire-Job",
+                    "in": "header",
+                    "required": true,
+                    "schema": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "name": "X-Quire-Timestamp",
+                    "in": "header",
+                    "required": true,
+                    "schema": {
+                      "type": "string"
+                    },
+                    "description": "Seconds since 1970 (UTC) when it was sent."
+                  },
+                  {
+                    "name": "X-Quire-Signature",
+                    "in": "header",
+                    "required": true,
+                    "schema": {
+                      "type": "string"
+                    },
+                    "description": "`sha256=` and the hex HMAC-SHA256 of `<X-Quire-Timestamp>.<body>`, keyed with the signing key: the SHA-256 of the whole API key, as lowercase hex. Check it, and that the timestamp is recent, before trusting the call."
+                  }
+                ],
+                "requestBody": {
+                  "required": true,
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "$ref": "#/components/schemas/Job"
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "2XX": {
+                    "description": "Taken. Anything else (or no answer within 30 s) is tried again."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}": {
+      "get": {
+        "operationId": "getJob",
+        "summary": "A job: each report's status, pages, layout issues and the values it was made with",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job for this account (or its files were deleted after the retention days).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooMany"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/file": {
+      "get": {
+        "operationId": "getJobFile",
+        "summary": "The job's file: the PDF (one client), or a zip of the batch's PDFs",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The PDF, or (a batch) a zip with a PDF per client that was done. `Content-Disposition` gives a file name.",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not ready: the job is still queued or running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job, or its files were deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "One client's report failed: its own error (also 422 or 500).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooMany"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/files/{client_id}": {
+      "get": {
+        "operationId": "getClientFile",
+        "summary": "One client's PDF of a job",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          },
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The PDF.",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "That client's report isn't ready yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job or client in it, or the file was deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooMany"
+          }
+        }
+      }
+    },
+    "/api/v1/templates": {
+      "get": {
+        "operationId": "listTemplates",
+        "summary": "The reports this account may ask for, and what each accepts",
+        "responses": {
+          "200": {
+            "description": "The reports.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Templates"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooMany"
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "operationId": "openapi",
+        "summary": "This description (no key needed)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "qk.<account>.<secret>",
+        "description": "The API account's key from Admin → API (shown once, when made). A new key replaces the old one at once; a switched-off account's key is refused."
+      }
+    },
+    "parameters": {
+      "JobId": {
+        "name": "job_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "No key, a wrong one, or the account is switched off.",
+        "headers": {
+          "WWW-Authenticate": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "TooMany": {
+        "description": "Past 60 new requests a minute (or 1200 other requests) for this account.",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ReportRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "period"
+        ],
+        "description": "Give `client_id` for one report or `clients` for a batch, not both.",
+        "properties": {
+          "template": {
+            "type": "string",
+            "description": "A published report's id (see /api/v1/templates). Left out: the default report (uhnwi).",
+            "examples": [
+              "uhnwi"
+            ]
+          },
+          "client_id": {
+            "type": "string",
+            "description": "The bank's id of the client.",
+            "examples": [
+              "C0025"
+            ]
+          },
+          "clients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 2000,
+            "description": "A batch: the bank's ids (each made once)."
+          },
+          "period": {
+            "$ref": "#/components/schemas/Period"
+          },
+          "params": {
+            "type": "object",
+            "description": "The report's other parameters, by name: only those Admin lets the API set (see /api/v1/templates). A text or number, or a list for one that takes several. Left out: Admin's default for API requests, else the template's.",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  }
+                }
+              ]
+            },
+            "examples": [
+              {
+                "product": [
+                  "BROK",
+                  "BANK"
+                ]
+              }
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "pdf"
+            ],
+            "default": "pdf"
+          },
+          "callback_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Called (POST) when the job is done; on a host Admin allows for the account. See the jobFinished callback."
+          }
+        }
+      },
+      "Period": {
+        "oneOf": [
+          {
+            "type": "object",
+            "title": "Dates",
+            "additionalProperties": false,
+            "required": [
+              "start",
+              "end"
+            ],
+            "properties": {
+              "start": {
+                "type": "string",
+                "format": "date"
+              },
+              "end": {
+                "type": "string",
+                "format": "date"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "title": "Named",
+            "additionalProperties": false,
+            "required": [
+              "preset"
+            ],
+            "properties": {
+              "preset": {
+                "type": "string",
+                "enum": [
+                  "ytd",
+                  "last_month",
+                  "last_quarter",
+                  "last_year"
+                ],
+                "description": "Counted back from the day of the request: this year so far, or the last whole month, quarter or year."
+              }
+            }
+          }
+        ]
+      },
+      "Job": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "created",
+          "template",
+          "period",
+          "reports",
+          "done",
+          "failed",
+          "items"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "partial",
+              "failed"
+            ],
+            "description": "partial: some reports done, some failed."
+          },
+          "created": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its files are deleted."
+          },
+          "template": {
+            "type": "string"
+          },
+          "period": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "string",
+                "format": "date"
+              },
+              "end": {
+                "type": "string",
+                "format": "date"
+              }
+            },
+            "description": "The dates it covers (a named period as dates)."
+          },
+          "reports": {
+            "type": "integer"
+          },
+          "done": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where to download (once done or partial)."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobItem"
+            }
+          },
+          "callback": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CallbackStatus"
+              }
+            ]
+          }
+        }
+      },
+      "JobItem": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "client",
+          "status"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client": {
+            "type": "string",
+            "description": "The client's name."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "failed"
+            ]
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "layout_issues": {
+            "type": "integer",
+            "description": "Pages with content cut off or running past the page: worth a look in Quire."
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "file": {
+            "type": "string",
+            "description": "This client's PDF."
+          },
+          "values": {
+            "$ref": "#/components/schemas/Values"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "integer"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          },
+          "copy": {
+            "type": "object",
+            "description": "The copy to the account's destination.",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "done",
+                  "failed"
+                ]
+              },
+              "to": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Values": {
+        "type": "object",
+        "description": "What the report was made with, defaults included.",
+        "properties": {
+          "template": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "client": {
+            "type": "string"
+          },
+          "period": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "string"
+              },
+              "end": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "CallbackStatus": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sent",
+              "failed"
+            ]
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "code": {
+            "type": "integer",
+            "description": "The last answer's status (0: nobody answered)."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Templates": {
+        "type": "object",
+        "properties": {
+          "templates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "default": {
+                  "type": "boolean",
+                  "description": "Made when a request names no template."
+                },
+                "params": {
+                  "type": "array",
+                  "description": "What a request may set, besides the client and period.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "list",
+                          "text",
+                          "number",
+                          "date"
+                        ]
+                      },
+                      "multi": {
+                        "type": "boolean"
+                      },
+                      "choices": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "default": {
+                        "description": "Used when a request leaves it out."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "periods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "status",
+              "message"
+            ],
+            "properties": {
+              "status": {
+                "type": "integer"
+              },
+              "message": {
+                "type": "string"
+              },
+              "clients": {
+                "type": "array",
+                "description": "A refused batch: each client refused and why.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "client_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

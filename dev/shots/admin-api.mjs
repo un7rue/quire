@@ -50,6 +50,9 @@ console.log('account:', await ev(`(() => { const f = document.querySelector('.ap
 console.log('used by:', await ev(`document.querySelector('.api-dests tbody tr td:nth-child(3)')?.innerText`));
 await ev(`document.querySelector('.api-edit [name=hooks]').scrollIntoView({ block: 'center' })`); await sleep(300);
 await shot(`admin-api-delivery-${lang}`);
+// the page as the guide shows it (picture 59): the account open, from the top
+await ev(`document.documentElement.dataset.theme = 'light'; document.querySelectorAll('.toast').forEach((t) => t.remove()); document.querySelector('.ar-head')?.scrollIntoView()`); await sleep(600);
+await shot(`admin-api-${lang}`);
 // Activity has the changes
 const acts = await ev(`(async () => { const m = await import('/ui/state.js'); const r = await m.call('activity', { filter: { area: 'admin', limit: 5 } }, { quiet: true }); return r.rows.map((x) => x.detail).join(' | '); })()`);
 console.log('activity:', acts);

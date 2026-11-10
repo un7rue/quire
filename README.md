@@ -81,7 +81,9 @@ the person's saved reports (*Saved*). Exports, briefs, CSVs and batch reports do
   file share too) or an S3-compatible bucket (signed by curl, `--aws-sigv4`; its secret sealed) — in folders by
   account, day and job; a request's `callback_url`, on a host Admin allows for the account, is POSTed the finished job,
   signed (`X-Quire-Signature: sha256=` HMAC-SHA256 of `<X-Quire-Timestamp>.<body>` with the SHA-256 hex of the API key)
-  and tried again up to four times (`src/api_delivery.rs`). Pages are drawn by the app's own drawing code in V8 (`src/render_js.rs`), with no browser. Jobs live in
+  and tried again up to four times (`src/api_delivery.rs`). **For the calling teams:**
+  [docs/report-api/README.md](docs/report-api/README.md) (quick start, errors, checking a callback's signature) and
+  [docs/report-api/openapi.json](docs/report-api/openapi.json), also served at `GET /api/v1/openapi.json` (no key). Pages are drawn by the app's own drawing code in V8 (`src/render_js.rs`), with no browser. Jobs live in
   `api/jobs/` in the data folder and survive a restart; their files are deleted after the retention days. Every request
   and report is in Activity under `api:<account>` (`src/api_jobs.rs`, checks: `node dev/web/api-checks.mjs`).
 - **Docker.** `docker build -t quire-server .` then

@@ -52,6 +52,8 @@ const wait = async (id) => {
   return null;
 };
 
+const desc = await fetch(BASE + '/api/v1/openapi.json').then(async (r) => ({ status: r.status, json: await r.json() })).catch((e) => ({ error: String(e) }));
+check('the description for the calling teams, without a key', desc.status === 200 && desc.json.openapi === '3.1.0' && !!desc.json.paths['/api/v1/reports'], desc);
 check('no key: 401', (await fetch(BASE + '/api/v1/templates')).status === 401);
 check('a wrong key: 401', (await fetch(BASE + '/api/v1/templates', { headers: { Authorization: 'Bearer qk.api-check.nope' } })).status === 401);
 const t = await api('GET', '/api/v1/templates');
