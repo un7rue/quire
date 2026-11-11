@@ -7,7 +7,7 @@
 // - Admin: accounts, passwords, roles and client access.
 
 import { setAreaAI } from './ai.js';
-import { KEYS_AT, WEB } from './platform.js';
+import { KEYS_AT } from './platform.js';
 import { appLanguage } from './i18n.js';
 import { accessPage, aiAdminPage, activityPage, proposalsAdminPage } from './admin.js';
 import { apiAdminPage } from './apiadmin.js';
@@ -950,8 +950,7 @@ const ADMIN_PARTS = [
   ['ai', 'sparkles', 'AI', 'What AI may send, providers, keys'],
   ['activity', 'clock', 'Activity', 'What people did: sign-ins, documents, edits, data, AI'],
   ['proposals', 'briefcase', 'Proposals', 'Every proposal bankers made: content, versions, status, the AI behind it'],
-  // the web server answers the report API; the desktop app doesn't
-  ...(WEB ? [['api', 'link', 'API', 'Systems that ask for reports: their keys, access and what each report accepts']] : []),
+  ['api', 'link', 'API', 'Systems that ask for reports: their keys, access and what each report accepts'],
 ];
 
 async function adminArea(el) {

@@ -287,7 +287,7 @@ In **Admin**, *Groups* lists the groups (Private bankers, Insurance desk, Analys
 the reports given to each. A person's page shows their **groups** (tick to join) and their **reports** — through a
 group, to everyone, or given to them (tick to give or take away one directly).
 
-**The report API** (web version): other systems ask Quire for reports with a key, set up in **Admin → API**. It has a
+**The report API** (answered by the web server): other systems ask Quire for reports with a key, set up in **Admin → API**. It has a
 chapter of its own: [17. Report API](#17-report-api).
 
 The **Data** role looks after every report's data without opening templates: with nothing open, the violet group in
@@ -2008,9 +2008,10 @@ and calls the system back when the job is done.
 
 ### 17.1 Running the server with the API
 
-The API is part of the **web server**, built with the report renderer. The desktop app doesn't answer API requests, so
-**Admin → API appears only in the browser version**. If the server was built without the renderer, the page says so
-at the top: settings can be made, but requests are refused until it is rebuilt.
+The API is part of the **web server**, built with the report renderer. The desktop app shows **Admin → API** too, but
+doesn't answer API requests: its page says so at the top, and what is set there stays on that computer — a server is
+set up in its own browser version. If the server was built without the renderer, the page says so at the top:
+settings can be made, but requests are refused until it is rebuilt.
 
 ```sh
 cargo run --release --no-default-features --features render --bin quire-server -- --data /srv/quire --api-workers 4
@@ -2252,7 +2253,7 @@ Keys and S3 secrets are never written to the log.
 
 | What you see | Why, and what to do |
 |---|---|
-| No **API** in Admin | It's the desktop app. Open the browser version of the server. |
+| Requests don't see what was set in Admin → API | It was set in the desktop app, which keeps its own settings. Set it up in the server's browser version. |
 | A warning on top of Admin → API, or `501 … built without the report renderer` | The server was built without `--features render`: its settings can be made, but requests are refused. Build it with the renderer. |
 | `401 Invalid API key` | The key was copied wrong, or a new key was made since. Make a new key and give it to the team. |
 | `401 … switched off` | *Its key works* is off for the account. |
@@ -2268,8 +2269,8 @@ Keys and S3 secrets are never written to the log.
 
 **Test**
 
-- [ ] The desktop app has no Admin → API; the browser version has it. A server built without `--features render`
-  shows a warning on top of it.
+- [ ] The desktop app has Admin → API with a note on top that it doesn't answer requests; the browser version has it
+  without that note. A server built without `--features render` shows a warning on top of it.
 - [ ] *What each report accepts* → UHNWI → tick *Products*, default `BROK` → **Save**.
 - [ ] **Add API account** → *Client portal*, *Selected clients* → one banker → **Add and make its key**: the key is
   shown once with *Copy*; after *Done* only its last four characters show.
