@@ -2330,5 +2330,6 @@ export default {
   'Quire can write to “{q}”': 'Quire может записывать в «{q}»',
   'Reports already copied there stay where they are.': 'Уже скопированные туда отчёты останутся на месте.',
   "Copies in a destination aren't deleted.": 'Копии в местах доставки не удаляются.',
+  'The desktop app doesn\'t answer API requests: the Quire web server does. What you set here is kept on this computer; a server keeps its own, set up in its browser version.': 'Настольное приложение не отвечает на запросы API — это делает веб-сервер Quire. Настройки здесь хранятся на этом компьютере; у сервера свои, они задаются в его браузерной версии.',
   'This server was built without the report renderer: these settings are kept, but requests are refused until it is built with it (cargo build --features render).': 'Этот сервер собран без модуля отрисовки отчётов: настройки сохраняются, но запросы отклоняются, пока он не будет собран с ним (cargo build --features render).',
 }

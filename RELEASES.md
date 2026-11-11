@@ -61,6 +61,9 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
 
 ### Improved
 
+- **Admin → API in the desktop app too.** The page was in the browser version only; the desktop app now shows it,
+  with a note on top that it doesn't answer API requests itself (the web server does) and keeps its settings on that
+  computer (`ui/apiadmin.js`, `ui/areas.js`).
 - **A single report doesn't wait behind a batch.** Reports asked for one client at a time (a CRM's click) are made
   before the batches already waiting: with three quarter-end batches running, one is ready in about a second instead
   of 20 (`src/api_jobs.rs`).
