@@ -9,7 +9,7 @@ they are shorter than the later ones. Ideas planned but not started are in [`bac
 
 ---
 
-## Unreleased — 10 November 2026
+## 0.3.0 — 18 November 2026
 
 ### New
 
